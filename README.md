@@ -161,6 +161,26 @@ sudo dnf remove midscroll         # or apt remove / pacman -R
 - Logs: `journalctl -u midscroll -f` and
   `journalctl --user -u midscroll-overlay -f`.
 
+## Security — please review the code yourself
+
+midscroll runs a background daemon that reads every mouse (and writes a
+virtual one) at the kernel input layer. That is a lot of trust to hand a
+program you found online. **Don't take my word that it's safe — read it.**
+It's deliberately small and dependency-light so you can:
+
+- `midscroll` (the daemon) and `midscroll-overlay` (the session badge/focus
+  helper) are single, commented Python files — skim them start to finish.
+- `midscroll-apply` is the only thing that runs as root on demand (via
+  pkexec from the settings GUI); it validates every value and only ever
+  writes `/etc/midscroll.conf`.
+- Both systemd units are sandboxed — see `systemd/*.service`. Run
+  `systemd-analyze security midscroll.service` and
+  `systemd-analyze security midscroll-overlay.service` to see the exposure
+  score for yourself.
+
+Found something sketchy or a way to harden it further? Open an issue or PR —
+security review is genuinely welcome.
+
 ## License
 
 Public domain ([the Unlicense](https://unlicense.org)): use, copy, modify,

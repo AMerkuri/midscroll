@@ -38,7 +38,7 @@ import time
 
 from evdev import InputDevice, UInput, ecodes as e, list_devices
 
-VERSION = "1.7"
+VERSION = "1.8"
 
 log = logging.getLogger("midscroll")
 
@@ -455,6 +455,28 @@ def make_uinput(dev):
     )
 
 
+def phys_roundtrips():
+    """True if a uinput device reports back the phys string we set on it.
+
+    is_mouse() skips our own mirrors by their PHYS_MARKER, with the tracked
+    device paths (our_paths) as backup. On a kernel where the phys string
+    doesn't survive, is_mouse can't tell a mirror apart, so the operator
+    should know the path tracking is doing all the work.
+    """
+    try:
+        probe = UInput({e.EV_REL: [e.REL_X, e.REL_Y]},
+                       name="midscroll self-check", phys=PHYS_MARKER)
+    except OSError as err:
+        log.warning("phys self-check: cannot open uinput: %s", err)
+        return False
+    try:
+        dev = probe.device
+        phys = (getattr(dev, "phys", "") or "") if dev else ""
+        return PHYS_MARKER in phys
+    finally:
+        probe.close()
+
+
 def _toggle_key(ev, st, ui, focus):
     """Handle a mouse-button event in toggle mode.
 
@@ -500,6 +522,15 @@ def _toggle_key(ev, st, ui, focus):
 
 async def pump(path, dev, states, tasks, focus, our_paths):
     """Grab one mouse and forward its events, intercepting middle-drags."""
+    # Belt to is_mouse's phys check and main's our_paths skip: never pump one
+    # of our own mirrors. Guards the brief hotplug window between a mirror
+    # appearing and our_paths learning its path, so a phys hiccup can't drop
+    # a root process into a 90 Hz input feedback loop.
+    if PHYS_MARKER in (dev.phys or "") or path in our_paths:
+        log.warning("refusing to grab our own mirror %s (%s)", dev.name, path)
+        dev.close()
+        tasks.pop(path, None)
+        return
     try:
         dev.grab()
     except OSError as err:
@@ -633,6 +664,9 @@ async def main():
     tasks = {}
     seen = set()
     our_paths = set()  # event nodes of our own uinput mirrors, never grabbed
+    if not phys_roundtrips():
+        log.warning("uinput phys marker did not round-trip; relying on "
+                    "device-path tracking to skip our own mirrors")
     tick_task = asyncio.create_task(ticker(states, notifier, focus))
     log.info("running")
     try:

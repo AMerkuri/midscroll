@@ -34,6 +34,15 @@ RestrictNamespaces=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
 SystemCallArchitectures=native
+# Allow only the service syscall set and fail the rest with EPERM rather
+# than SIGSYS. @system-service already excludes @resources, @privileged,
+# @module, @mount and friends, and still includes ioctl (EVIOCGRAB + uinput)
+# and epoll, so grabbing and asyncio keep working. FIFO scheduling is set by
+# systemd before exec, so no realtime syscall is needed here.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Pure CPython, no JIT, so it never needs writable-executable memory.
+MemoryDenyWriteExecute=yes
 
 [Install]
 WantedBy=multi-user.target

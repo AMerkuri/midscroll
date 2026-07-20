@@ -1,5 +1,5 @@
 Name:           midscroll
-Version:        1.7
+Version:        1.8
 Release:        1%{?dist}
 Summary:        Windows-style middle-button drag autoscroll
 License:        Unlicense
@@ -88,6 +88,15 @@ fi
 %config(noreplace) %{_sysconfdir}/midscroll.conf
 
 %changelog
+* Mon Jul 20 2026 midscroll - 1.8-1
+- Sandbox the session helper (midscroll-overlay): NoNewPrivileges,
+  ProtectSystem=strict, PrivateTmp, kernel/clock/namespace protections and a
+  restricted address-family set, matching the daemon's hardening
+- Add a syscall filter (@system-service, EPERM) and MemoryDenyWriteExecute to
+  the daemon
+- Refuse to grab our own uinput mirrors even if the phys marker fails, and
+  warn at startup if the phys marker does not round-trip
+
 * Mon Jul 20 2026 midscroll - 1.7-1
 - Settings GUI (midscroll-settings): a GTK window to change every tunable -
   speed, dead zone, event rate, natural scrolling, the app blacklist and
