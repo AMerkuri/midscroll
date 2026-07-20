@@ -76,8 +76,8 @@ both; the overlay starts at your next login, or immediately with
 ## Settings GUI
 
 Search your app menu for **midscroll Settings** (or run `midscroll-settings`)
-for a GTK window that changes every setting — speed, dead zone, event rate,
-natural scrolling, the app blacklist and toggle mode — with sliders and
+for a GTK window that changes every setting - speed, dead zone, event rate,
+natural scrolling, the app blacklist and toggle mode - with sliders and
 switches. Clicking **Apply** asks for admin authorization (via pkexec, using
 midscroll's own polkit action, so the prompt is scoped and briefly cached),
 writes `/etc/midscroll.conf` and restarts the daemon for you.
@@ -162,24 +162,24 @@ sudo dnf remove midscroll         # or apt remove / pacman -R
 - Logs: `journalctl -u midscroll -f` and
   `journalctl --user -u midscroll-overlay -f`.
 
-## Security — please review the code yourself
+## Security - please review the code yourself
 
 midscroll runs a background daemon that reads every mouse (and writes a
 virtual one) at the kernel input layer. That is a lot of trust to hand a
-program you found online. **Don't take my word that it's safe — read it.**
+program you found online. **Don't take my word that it's safe - read it.**
 It's deliberately small and dependency-light so you can:
 
 - `midscroll` (the daemon) and `midscroll-overlay` (the session badge/focus
-  helper) are single, commented Python files — skim them start to finish.
+  helper) are single, commented Python files - skim them start to finish.
 - `midscroll-apply` is the only thing that runs as root on demand (via
   pkexec from the settings GUI); it validates every value and only ever
   writes `/etc/midscroll.conf`.
-- Both systemd units are sandboxed — see `systemd/*.service`. Run
+- Both systemd units are sandboxed - see `systemd/*.service`. Run
   `systemd-analyze security midscroll.service` and
   `systemd-analyze security midscroll-overlay.service` to see the exposure
   score for yourself.
 
-Found something sketchy or a way to harden it further? Open an issue or PR —
+Found something sketchy or a way to harden it further? Open an issue or PR -
 security review is genuinely welcome.
 
 ## License
