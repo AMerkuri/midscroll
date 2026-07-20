@@ -1,0 +1,12 @@
+[Unit]
+Description=midscroll overlay - scroll icon at the autoscroll anchor point
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/midscroll-overlay
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

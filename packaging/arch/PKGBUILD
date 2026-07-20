@@ -1,0 +1,27 @@
+pkgname=midscroll
+pkgver=1.3
+pkgrel=1
+pkgdesc="Windows-style middle-button drag autoscroll (kernel-level, works on Wayland and X11)"
+arch=('any')
+url="https://github.com/gnhen/midscroll"
+license=('Unlicense')
+depends=('python' 'python-evdev' 'python-gobject' 'python-cairo' 'gtk4'
+         'gtk4-layer-shell' 'librsvg')
+optdepends=('kdotool: scroll badge at the cursor while scrolling (AUR)')
+install=midscroll.install
+source=()
+
+package() {
+    cd "$startdir/../.."
+    install -Dm755 midscroll.py "$pkgdir/usr/bin/midscroll"
+    install -Dm755 midscroll-overlay.py "$pkgdir/usr/bin/midscroll-overlay"
+    install -Dm644 systemd/midscroll.service \
+        "$pkgdir/usr/lib/systemd/system/midscroll.service"
+    install -Dm644 systemd/midscroll-overlay.service \
+        "$pkgdir/usr/lib/systemd/user/midscroll-overlay.service"
+    install -Dm644 icons/move-vertical.svg \
+        "$pkgdir/usr/share/midscroll/move-vertical.svg"
+    install -Dm644 midscroll.conf "$pkgdir/etc/midscroll.conf"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/midscroll/README.md"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/midscroll/LICENSE"
+}

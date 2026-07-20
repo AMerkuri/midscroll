@@ -1,0 +1,12 @@
+post_install() {
+    echo "Start the scroll daemon with:"
+    echo "  sudo systemctl enable --now midscroll"
+    echo "Enable the scroll badge overlay (KDE; needs kdotool from the AUR):"
+    echo "  sudo systemctl --global enable midscroll-overlay"
+    echo "  systemctl --user start midscroll-overlay"
+}
+
+pre_remove() {
+    systemctl disable --now midscroll.service || true
+    systemctl --global disable midscroll-overlay.service || true
+}

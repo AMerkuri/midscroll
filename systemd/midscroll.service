@@ -1,0 +1,16 @@
+[Unit]
+Description=midscroll - Windows-style middle-drag autoscroll
+
+[Service]
+ExecStartPre=-/usr/sbin/modprobe uinput
+ExecStart=/usr/bin/python3 /usr/bin/midscroll
+# Holds the state socket the session overlay (midscroll-overlay) listens on
+RuntimeDirectory=midscroll
+Restart=always
+RestartSec=2
+# Mouse events pass through this process; make sure it's never starved.
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=20
+
+[Install]
+WantedBy=multi-user.target
