@@ -38,7 +38,7 @@ import time
 
 from evdev import InputDevice, UInput, ecodes as e, list_devices
 
-VERSION = "1.11"
+VERSION = "1.12"
 
 log = logging.getLogger("midscroll")
 
@@ -56,10 +56,18 @@ MAX_DRAG_PX = 1200.0      # cap on effective drag distance (~screen height)
 TICK_HZ = 90.0            # scroll event rate (higher = smoother)
 NATURAL = False           # True inverts scroll direction
 TOGGLE_MODE = False       # True: click to start/stop instead of hold-and-drag
+DESKTOP_SCROLL = False    # True: also autoscroll over the desktop and panels
 
 # Window-class substrings (case-insensitive) over which midscroll pauses
 # and the middle button behaves natively.
 BLACKLIST = ["freecad", "orcaslicer", "minecraft"]
+
+# Desktop-environment shells (desktop, panels, taskbars) — autoscroll over
+# these is almost never wanted (on KDE it switches virtual desktops; panels
+# have nothing to scroll). Blocked exactly like BLACKLIST, but only while
+# DESKTOP_SCROLL is off (the default). Lowercase, to match parse_blacklist.
+DESKTOP_SHELLS = ["plasmashell", "nemo-desktop", "xfdesktop", "waybar",
+                  "xfce4-panel", "org.gnome.shell", "gjs"]
 
 HIRES_PER_LINE = 120      # kernel convention: 120 hi-res units per notch
 MAX_TICK_DT = 0.25        # cap the per-tick time step (see ticker())
@@ -70,7 +78,7 @@ SOCK_PATH = SOCK_DIR + "/state.sock"
 
 FLOAT_KEYS = {"DEADZONE_PX", "TICK_HZ", "SPEED_MULT", "SPEED_EXP",
               "MAX_PX_PER_SEC", "PX_PER_NOTCH", "MAX_DRAG_PX"}
-BOOL_KEYS = {"NATURAL", "TOGGLE_MODE"}
+BOOL_KEYS = {"NATURAL", "TOGGLE_MODE", "DESKTOP_SCROLL"}
 # Zero would divide by zero (TICK_HZ, PX_PER_NOTCH) or make the daemon
 # silently never scroll; only the dead zone may be zero.
 POSITIVE_KEYS = FLOAT_KEYS - {"DEADZONE_PX"}
@@ -181,9 +189,10 @@ class FocusFilter:
 
     @property
     def blocked(self):
+        blockers = BLACKLIST if DESKTOP_SCROLL else BLACKLIST + DESKTOP_SHELLS
         for wclass in self.by_client.values():
             c = wclass.lower()
-            if any(b in c for b in BLACKLIST):
+            if any(b in c for b in blockers):
                 return True
         return False
 
@@ -743,6 +752,10 @@ def parse_args(argv=None):
                    default=None, dest="toggle_mode",
                    help="click to start/stop autoscroll (Windows-Explorer "
                         "style) instead of hold-and-drag")
+    p.add_argument("--desktop", action=argparse.BooleanOptionalAction,
+                   default=None, dest="desktop_scroll",
+                   help="also autoscroll over the desktop and panels "
+                        "(default: off, so they are left alone)")
     p.add_argument("--blacklist", metavar="APPS", default=None,
                    help="comma-separated window-class substrings over which "
                         "midscroll pauses (default: "
@@ -768,11 +781,14 @@ def cli():
         globals()["NATURAL"] = args.natural
     if args.toggle_mode is not None:
         globals()["TOGGLE_MODE"] = args.toggle_mode
+    if args.desktop_scroll is not None:
+        globals()["DESKTOP_SCROLL"] = args.desktop_scroll
     if args.blacklist is not None:
         globals()["BLACKLIST"] = parse_blacklist(args.blacklist)
-    log.debug("tunables: %s NATURAL=%s TOGGLE_MODE=%s BLACKLIST=%s",
+    log.debug("tunables: %s NATURAL=%s TOGGLE_MODE=%s DESKTOP_SCROLL=%s "
+              "BLACKLIST=%s",
               " ".join(f"{k}={globals()[k]:g}" for k in sorted(FLOAT_KEYS)),
-              NATURAL, TOGGLE_MODE, BLACKLIST)
+              NATURAL, TOGGLE_MODE, DESKTOP_SCROLL, BLACKLIST)
     asyncio.run(main())
 
 

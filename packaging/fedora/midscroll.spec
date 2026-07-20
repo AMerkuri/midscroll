@@ -1,5 +1,5 @@
 Name:           midscroll
-Version:        1.11
+Version:        1.12
 Release:        1%{?dist}
 Summary:        Windows-style middle-button drag autoscroll
 License:        Unlicense
@@ -96,6 +96,13 @@ fi
 %config(noreplace) %{_sysconfdir}/midscroll.conf
 
 %changelog
+* Mon Jul 20 2026 midscroll - 1.12-1
+- Add an "Enable on desktop & panels" toggle (DESKTOP_SCROLL, off by
+  default): while a desktop shell is focused (plasmashell, nemo-desktop,
+  xfdesktop, waybar, xfce4-panel, GNOME Shell/gjs) midscroll pauses, so a
+  middle-drag no longer hijacks the desktop or a panel. Exposed in the
+  settings GUI and as --desktop / --no-desktop
+
 * Mon Jul 20 2026 midscroll - 1.11-1
 - Fix the scroll badge and app blacklist still missing under the overlay
   sandbox: use ProtectSystem=full instead of strict (strict makes /tmp

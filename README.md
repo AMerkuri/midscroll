@@ -30,6 +30,10 @@ Details:
 - Apps that use middle-drag themselves (FreeCAD, OrcaSlicer and Minecraft
   by default) are blacklisted by window class: while one of them is
   focused, midscroll pauses itself and the middle button behaves natively.
+- The desktop and panels are left alone by default: while a desktop shell
+  (plasmashell, xfdesktop, waybar, GNOME Shell, ...) is focused midscroll
+  pauses, so a middle-drag can't hijack the desktop. Turn on **Enable on
+  desktop & panels** (`DESKTOP_SCROLL = true`) if you want it there too.
 
 ## Install
 
@@ -77,8 +81,8 @@ both; the overlay starts at your next login, or immediately with
 
 Search your app menu for **midscroll Settings** (or run `midscroll-settings`)
 for a GTK window that changes every setting - speed, dead zone, event rate,
-natural scrolling, the app blacklist and toggle mode - with sliders and
-switches. Clicking **Apply** asks for admin authorization (via pkexec, using
+natural scrolling, the app blacklist, toggle mode and the desktop/panels
+toggle - with sliders and switches. Clicking **Apply** asks for admin authorization (via pkexec, using
 midscroll's own polkit action, so the prompt is scoped and briefly cached),
 writes `/etc/midscroll.conf` and restarts the daemon for you.
 
@@ -95,6 +99,7 @@ PX_PER_NOTCH = 55         # px one wheel notch scrolls in your apps
 TICK_HZ = 90              # scroll event rate (higher = smoother)
 NATURAL = false           # true = inverted / touchscreen-style direction
 TOGGLE_MODE = false       # true = click to start/stop instead of hold-drag
+DESKTOP_SCROLL = false    # true = also autoscroll over the desktop and panels
 BLACKLIST = freecad, orcaslicer, minecraft
                           # window-class substrings that pause midscroll
                           # (apps with native middle-drag); '' disables
@@ -114,8 +119,9 @@ midscroll --help          # full option list
 ```
 
 `--debug` turns on debug logging (device probing, focus changes, scroll
-starts); `--blacklist "app1, app2"`, `--natural` / `--no-natural` and
-`--toggle-mode` / `--no-toggle-mode` toggle the corresponding behaviors.
+starts); `--blacklist "app1, app2"`, `--natural` / `--no-natural`,
+`--toggle-mode` / `--no-toggle-mode` and `--desktop` / `--no-desktop`
+(autoscroll over the desktop and panels) toggle the corresponding behaviors.
 
 ## Pause / uninstall
 
