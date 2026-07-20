@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 repo=$(cd ../.. && pwd)
 
-version=1.8-1
+version=1.9-1
 maintainer=${DEB_MAINTAINER:-"midscroll maintainers <noreply@example.com>"}
 
 work=$(mktemp -d)
@@ -22,6 +22,8 @@ install -Dm755 "$repo/midscroll-settings.py" "$stage/usr/bin/midscroll-settings"
 install -Dm755 "$repo/midscroll-apply.py" "$stage/usr/bin/midscroll-apply"
 install -Dm644 "$repo/midscroll-settings.desktop" \
     "$stage/usr/share/applications/midscroll-settings.desktop"
+install -Dm644 "$repo/io.github.gnhen.midscroll.policy" \
+    "$stage/usr/share/polkit-1/actions/io.github.gnhen.midscroll.policy"
 install -Dm644 "$repo/systemd/midscroll.service" \
     "$stage/usr/lib/systemd/system/midscroll.service"
 install -Dm644 "$repo/systemd/midscroll-overlay.service" \

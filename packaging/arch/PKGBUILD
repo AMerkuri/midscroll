@@ -1,5 +1,5 @@
 pkgname=midscroll
-pkgver=1.8
+pkgver=1.9
 pkgrel=1
 pkgdesc="Windows-style middle-button drag autoscroll (kernel-level, works on Wayland and X11)"
 arch=('any')
@@ -20,6 +20,8 @@ package() {
     install -Dm755 midscroll-apply.py "$pkgdir/usr/bin/midscroll-apply"
     install -Dm644 midscroll-settings.desktop \
         "$pkgdir/usr/share/applications/midscroll-settings.desktop"
+    install -Dm644 io.github.gnhen.midscroll.policy \
+        "$pkgdir/usr/share/polkit-1/actions/io.github.gnhen.midscroll.policy"
     install -Dm644 systemd/midscroll.service \
         "$pkgdir/usr/lib/systemd/system/midscroll.service"
     install -Dm644 systemd/midscroll-overlay.service \

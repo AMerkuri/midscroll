@@ -15,6 +15,8 @@ install -Dm755 midscroll-settings.py /usr/bin/midscroll-settings
 install -Dm755 midscroll-apply.py /usr/bin/midscroll-apply
 install -Dm644 midscroll-settings.desktop \
     /usr/share/applications/midscroll-settings.desktop
+install -Dm644 io.github.gnhen.midscroll.policy \
+    /usr/share/polkit-1/actions/io.github.gnhen.midscroll.policy
 install -Dm644 systemd/midscroll.service /etc/systemd/system/midscroll.service
 install -Dm644 systemd/midscroll-overlay.service \
     /usr/lib/systemd/user/midscroll-overlay.service

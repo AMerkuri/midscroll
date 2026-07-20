@@ -78,7 +78,8 @@ both; the overlay starts at your next login, or immediately with
 Search your app menu for **midscroll Settings** (or run `midscroll-settings`)
 for a GTK window that changes every setting — speed, dead zone, event rate,
 natural scrolling, the app blacklist and toggle mode — with sliders and
-switches. Clicking **Apply** asks for admin authorization (via pkexec),
+switches. Clicking **Apply** asks for admin authorization (via pkexec, using
+midscroll's own polkit action, so the prompt is scoped and briefly cached),
 writes `/etc/midscroll.conf` and restarts the daemon for you.
 
 ## Tuning

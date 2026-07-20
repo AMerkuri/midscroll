@@ -1,5 +1,5 @@
 Name:           midscroll
-Version:        1.8
+Version:        1.9
 Release:        1%{?dist}
 Summary:        Windows-style middle-button drag autoscroll
 License:        Unlicense
@@ -16,6 +16,7 @@ Source7:        LICENSE
 Source8:        midscroll-settings.py
 Source9:        midscroll-apply.py
 Source10:       midscroll-settings.desktop
+Source11:       io.github.gnhen.midscroll.policy
 
 Requires:       python3
 Requires:       python3-evdev
@@ -53,6 +54,8 @@ install -Dm755 %{SOURCE8} %{buildroot}%{_bindir}/midscroll-settings
 install -Dm755 %{SOURCE9} %{buildroot}%{_bindir}/midscroll-apply
 install -Dm644 %{SOURCE10} \
     %{buildroot}%{_datadir}/applications/midscroll-settings.desktop
+install -Dm644 %{SOURCE11} \
+    %{buildroot}%{_datadir}/polkit-1/actions/io.github.gnhen.midscroll.policy
 install -d %{buildroot}%{_userpresetdir}
 echo "enable midscroll-overlay.service" \
     > %{buildroot}%{_userpresetdir}/90-midscroll.preset
@@ -85,9 +88,19 @@ fi
 %{_userpresetdir}/90-midscroll.preset
 %{_datadir}/midscroll/move-vertical.svg
 %{_datadir}/applications/midscroll-settings.desktop
+%{_datadir}/polkit-1/actions/io.github.gnhen.midscroll.policy
 %config(noreplace) %{_sysconfdir}/midscroll.conf
 
 %changelog
+* Mon Jul 20 2026 midscroll - 1.9-1
+- Bound and sanitize the BLACKLIST value in midscroll-apply (the only
+  free-text field crossing the pkexec boundary): strip non-window-class
+  characters and cap length, so it cannot mangle the config or carry a
+  huge/malformed payload
+- Ship a polkit policy for midscroll-apply (auth_admin_keep), so applying
+  settings from the GUI uses a scoped, briefly-cached authorization instead
+  of generic full-admin auth
+
 * Mon Jul 20 2026 midscroll - 1.8-1
 - Sandbox the session helper (midscroll-overlay): NoNewPrivileges,
   ProtectSystem=strict, PrivateTmp, kernel/clock/namespace protections and a

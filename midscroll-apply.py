@@ -14,6 +14,7 @@ Pass --no-restart to only write the file.
 
 import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -114,10 +115,14 @@ def main(argv):
             except ValueError as err:
                 die(f"{key}: {err}")
         else:  # BLACKLIST
-            # Normalise to a clean comma list; strip anything that could
-            # break out of the single config line.
-            parts = [p.strip() for p in val.replace("\n", ",").split(",")]
-            values[key] = ", ".join(p for p in parts if p)
+            # Normalise to a clean, bounded comma list. Strip anything that
+            # isn't a plausible window-class character (drops '#', which the
+            # daemon's parser would treat as a comment, plus control chars),
+            # and cap per-part and total length so a caller can't push a
+            # huge or malformed value into the root-written config.
+            parts = [re.sub(r"[^\w.\- ]", "", p.strip(), flags=re.ASCII)[:64]
+                     for p in val.replace("\n", ",").split(",")]
+            values[key] = ", ".join(p for p in parts if p)[:512]
 
     text = TEMPLATE.format(
         NATURAL="true" if values["NATURAL"] else "false",

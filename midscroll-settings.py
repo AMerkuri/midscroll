@@ -71,7 +71,12 @@ def read_config(path=CONFIG_PATH):
 
 
 def find_apply():
-    """Locate the privileged writer (installed, or alongside this file)."""
+    """Locate the privileged writer (installed, or alongside this file).
+
+    The installed /usr/bin/midscroll-apply is checked first, deliberately: it
+    is root-owned, so it is preferred over a sibling copy that might sit in a
+    user-writable checkout. The checkout paths are only a dev fallback.
+    """
     here = os.path.dirname(os.path.realpath(__file__))
     for cand in ("/usr/bin/midscroll-apply",
                  os.path.join(here, "midscroll-apply"),

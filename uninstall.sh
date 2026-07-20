@@ -17,6 +17,7 @@ rm -f /usr/lib/systemd/user/midscroll-overlay.service /usr/bin/midscroll-overlay
 rm -f /usr/bin/midscroll-settings /usr/bin/midscroll-apply
 rm -f /usr/share/applications/midscroll-settings.desktop
 rm -f /usr/share/icons/hicolor/scalable/apps/midscroll.svg
+rm -f /usr/share/polkit-1/actions/io.github.gnhen.midscroll.policy
 rm -rf /usr/share/midscroll
 systemctl daemon-reload
 
