@@ -124,8 +124,14 @@ sudo dnf remove midscroll         # or apt remove / pacman -R
   daemon can't see itself: the `midscroll-overlay` session service polls
   it (once a second, only on change is it sent) via kdotool on KDE
   Wayland or xprop on X11, and reports it to the daemon over the state
-  socket. No helper running (or another Wayland desktop) just means the
-  blacklist is inactive; focus changes take effect within about a second.
+  socket. The daemon only trusts reports from a logged-in user's helper,
+  so another local process can't feed it a fake focus and pause it. No
+  helper running (or another Wayland desktop) just means the blacklist is
+  inactive.
+- Switching into a blacklisted app takes effect within about a second
+  (the poll interval), and stops an in-progress scroll too. If you press
+  the middle button in that brief window right after switching, a short
+  scroll may start before the daemon sees the new focus and stops it.
 - If Firefox's built-in autoscroll is enabled (`general.autoScroll` in
   about:config), turn it off so the two don't fight. It's off by default
   on Linux.

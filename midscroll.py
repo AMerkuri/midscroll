@@ -25,21 +25,24 @@ import asyncio
 import logging
 import math
 import os
+import socket
+import struct
+import time
 
 from evdev import InputDevice, UInput, ecodes as e, list_devices
 
-VERSION = "1.4"
+VERSION = "1.5"
 
 log = logging.getLogger("midscroll")
 
 # ---- Tuning (override in /etc/midscroll.conf or via CLI) ------------------
-# Speed curve from Chromium/Edge's AutoscrollController:
+# Speed curve from Chromium/Edge's autoscroll:
 #   velocity_px_per_sec = SPEED_MULT * |offset_px| ^ SPEED_EXP   (per axis)
 # with a 15 px per-axis dead zone. Chromium uses 0.000008 * d^2.2 in px/ms;
 # SPEED_MULT is that times 1000.
 DEADZONE_PX = 15.0        # per-axis dead zone, as in Chromium
 SPEED_MULT = 0.008        # px/sec multiplier, overall speed
-SPEED_EXP = 2.2           # Chromium's exponent: slow near, fast far
+SPEED_EXP = 2.2           # exponent: slow near the press point, fast far
 MAX_PX_PER_SEC = 30000.0  # safety cap on scroll speed
 PX_PER_NOTCH = 55.0       # how many px one wheel notch scrolls in your apps
 MAX_DRAG_PX = 1200.0      # cap on effective drag distance (~screen height)
@@ -51,6 +54,7 @@ NATURAL = False           # True inverts scroll direction
 BLACKLIST = ["freecad", "orcaslicer", "minecraft"]
 
 HIRES_PER_LINE = 120      # kernel convention: 120 hi-res units per notch
+MAX_TICK_DT = 0.25        # cap the per-tick time step (see ticker())
 VIRTUAL_NAME = "midscroll virtual mouse"
 CONFIG_PATH = "/etc/midscroll.conf"
 SOCK_DIR = "/run/midscroll"
@@ -58,13 +62,13 @@ SOCK_PATH = SOCK_DIR + "/state.sock"
 
 FLOAT_KEYS = {"DEADZONE_PX", "TICK_HZ", "SPEED_MULT", "SPEED_EXP",
               "MAX_PX_PER_SEC", "PX_PER_NOTCH", "MAX_DRAG_PX"}
-# Zero would mean a division by zero (TICK_HZ, PX_PER_NOTCH) or a daemon
-# that silently never scrolls; only the dead zone may be zero.
+# Zero would divide by zero (TICK_HZ, PX_PER_NOTCH) or make the daemon
+# silently never scroll; only the dead zone may be zero.
 POSITIVE_KEYS = FLOAT_KEYS - {"DEADZONE_PX"}
 
 
 def validate(key, val):
-    """Returns an error string if val is out of bounds for key, else None."""
+    """Return an error string if val is out of bounds for key, else None."""
     if not math.isfinite(val):
         return "must be a finite number"
     if key in POSITIVE_KEYS and val <= 0:
@@ -110,28 +114,65 @@ def load_config(path=CONFIG_PATH):
             log.warning("config: unknown key %s", k)
 
 
-class FocusFilter:
-    """Latest focused-window class, as reported by the session helper.
+def _peer_uid(sock):
+    """UID of the process on the other end of a unix socket, or None."""
+    if sock is None:
+        return None
+    try:
+        creds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                struct.calcsize("3i"))
+        _pid, uid, _gid = struct.unpack("3i", creds)
+        return uid
+    except OSError:
+        return None
 
-    The root daemon cannot see session windows itself; midscroll-overlay
-    polls the compositor (kdotool on KDE, xprop on X11) and pushes
-    "focus <class>" lines over the state socket. With no helper connected
-    the class is empty and nothing is ever blocked.
+
+def _uid_has_active_seat(uid):
+    """True if uid is a user logged in on a seat (not a service account).
+
+    logind writes /run/systemd/users/<uid> with a STATE line for each
+    logged-in user. We only trust focus reports from such a user, so a
+    random local process (sandboxed app, service account) can't feed the
+    daemon and pause it. Without logind nobody is trusted and the app
+    blacklist is simply inactive.
+    """
+    try:
+        with open(f"/run/systemd/users/{uid}") as f:
+            for line in f:
+                if line.startswith("STATE="):
+                    return line.strip()[len("STATE="):] in ("active", "online")
+    except OSError:
+        pass
+    return False
+
+
+class FocusFilter:
+    """The focused window class reported by each connected helper.
+
+    The root daemon can't see session windows itself, so every
+    midscroll-overlay reports its focused window's class. We keep one
+    entry per helper and pause midscroll when any of them has a
+    blacklisted app focused. Keeping them separate means one helper
+    disconnecting can't wipe another's report.
     """
 
     def __init__(self):
-        self.wclass = ""
+        self.by_client = {}
 
-    def update(self, wclass):
-        if wclass != self.wclass:
-            self.wclass = wclass
-            log.debug("focus: %r%s", wclass,
-                      " (blacklisted)" if self.blocked else "")
+    def update(self, client, wclass):
+        self.by_client[client] = wclass
+        log.debug("focus: %r (blocked=%s)", wclass, self.blocked)
+
+    def remove(self, client):
+        self.by_client.pop(client, None)
 
     @property
     def blocked(self):
-        c = self.wclass.lower()
-        return any(b in c for b in BLACKLIST)
+        for wclass in self.by_client.values():
+            c = wclass.lower()
+            if any(b in c for b in BLACKLIST):
+                return True
+        return False
 
 
 class Notifier:
@@ -139,9 +180,11 @@ class Notifier:
 
     Sends b"1\\n" when a drag-scroll starts and b"0\\n" when it stops (and
     the current state on connect) so the helper can draw the badge; reads
-    "focus <window class>" lines back from the helper to drive the
-    blacklist. Purely advisory: scrolling works fine with no listeners,
-    and a failure to bind the socket is non-fatal.
+    "focus <window class>" lines back to drive the blacklist. Only helpers
+    running as a logged-in user are accepted (see _uid_has_active_seat);
+    everything else is dropped, so a stray local process can't pause the
+    daemon. Purely advisory otherwise: scrolling works with no listeners,
+    and failing to bind the socket is non-fatal.
     """
 
     def __init__(self, focus):
@@ -159,11 +202,19 @@ class Notifier:
                 pass
             self.server = await asyncio.start_unix_server(
                 self._client, SOCK_PATH)
-            os.chmod(SOCK_PATH, 0o666)  # any session user may listen
+            # World-accessible so any session's helper can connect; each
+            # connection is then checked by peer UID before we trust it.
+            os.chmod(SOCK_PATH, 0o666)
         except OSError as err:
             log.warning("overlay socket unavailable: %s", err)
 
     async def _client(self, reader, writer):
+        uid = _peer_uid(writer.get_extra_info("socket"))
+        if uid is None or not _uid_has_active_seat(uid):
+            log.debug("rejected socket from uid %s", uid)
+            writer.close()
+            return
+        client = object()  # identity key for this connection's focus report
         self.writers.add(writer)
         try:
             writer.write(self.msg)
@@ -171,15 +222,15 @@ class Notifier:
                 line = await reader.readline()
                 if not line:
                     break
-                line = line.decode("utf-8", "replace").strip()
-                if line.startswith("focus "):
-                    self.focus.update(line[len("focus "):])
+                text = line.decode("utf-8", "replace").strip()
+                if text.startswith("focus "):
+                    self.focus.update(client, text[len("focus "):])
         except (OSError, ConnectionError, ValueError):
             pass
         finally:
             self.writers.discard(writer)
+            self.focus.remove(client)
             writer.close()
-            self.focus.update("")  # helper gone; its last report is stale
 
     def set(self, active):
         msg = b"1\n" if active else b"0\n"
@@ -215,24 +266,24 @@ class State:
         self.pending = True
 
     def release(self):
-        """Returns True if this was a plain click (no drag)."""
+        """Return True if this was a plain click (no drag)."""
         was_click = self.pending
         self.reset()
         return was_click
 
 
 def _clamp(v):
-    # The cursor is anchored during a drag, so nothing naturally bounds the
-    # drag distance; cap it like Windows caps the cursor at the screen edge,
-    # so slowing back down never requires a huge reverse drag.
+    # The cursor is anchored during a drag, so nothing bounds the drag
+    # distance on its own; cap it the way Windows caps the cursor at the
+    # screen edge, so slowing down never needs a huge reverse drag.
     return math.copysign(min(abs(v), MAX_DRAG_PX), v)
 
 
 def speed_px(offset):
     """Pixels/second for a per-axis offset from the press point.
 
-    Components inside the dead zone are zeroed; outside it velocity grows
-    as offset^2.2, so small drags crawl and full-screen drags fly.
+    Inside the dead zone the speed is zero; outside it grows as
+    offset^2.2, so small drags crawl and full-screen drags fly.
     """
     if abs(offset) <= DEADZONE_PX:
         return 0.0
@@ -240,25 +291,38 @@ def speed_px(offset):
     return math.copysign(min(v, MAX_PX_PER_SEC), offset)
 
 
-async def ticker(ui, states, notifier):
+async def ticker(ui, states, notifier, focus):
+    # Measure the real time between ticks instead of assuming 1/TICK_HZ:
+    # under load asyncio.sleep overshoots, and using the nominal step
+    # would quietly make scrolling slower than configured.
+    last = time.monotonic()
     while True:
         await asyncio.sleep(1.0 / TICK_HZ)
+        now = time.monotonic()
+        dt = min(now - last, MAX_TICK_DT)  # cap so a stall can't lurch
+        last = now
         for st in list(states.values()):
             try:
-                tick(ui, st)
+                tick(ui, st, dt, focus)
             except Exception as err:  # one bad tick must not kill the loop
                 log.error("tick error: %r", err)
         notifier.set(any(st.active for st in states.values()))
 
 
-def tick(ui, st):
+def tick(ui, st, dt, focus):
+    if focus.blocked:
+        # A blacklisted app is focused. Never scroll, and stop a drag that
+        # was already running (focus changed mid-drag) so it can't keep
+        # scrolling under the blacklisted app.
+        if st.active or st.pending:
+            st.reset()
+        return
     if st.pending and (abs(st.dx) > DEADZONE_PX or abs(st.dy) > DEADZONE_PX):
         st.pending = False
         st.active = True
         log.debug("scroll started")
     if not st.active:
         return
-    dt = 1.0 / TICK_HZ
     s = 1 if NATURAL else -1
     to_hires = HIRES_PER_LINE / PX_PER_NOTCH
     # Drag down => wheel-down (negative REL_WHEEL); drag right => positive
@@ -290,6 +354,32 @@ def tick(ui, st):
         ui.syn()
 
 
+def _resync(ui, dev, held, st):
+    """Release any virtual button the real device no longer holds down.
+
+    Called after SYN_DROPPED, where the kernel dropped events on us and a
+    button release may be among them. We compare the buttons we're holding
+    on the virtual device against the real device's current state and let
+    go of the difference, so a dropped release can't leave a stuck button.
+    """
+    active = dev.active_keys()
+    changed = False
+    for code in list(held):
+        if code not in active:
+            ui.write(e.EV_KEY, code, 0)
+            held.discard(code)
+            changed = True
+    if e.BTN_MIDDLE not in active:
+        if st.passthrough:
+            st.passthrough = False
+            ui.write(e.EV_KEY, e.BTN_MIDDLE, 0)  # we did press it through
+            changed = True
+        elif st.pending or st.active:
+            st.release()  # drag button never went to the virtual device
+    if changed:
+        ui.syn()
+
+
 async def pump(path, dev, ui, states, tasks, focus):
     """Grab one mouse and forward its events, intercepting middle-drags."""
     try:
@@ -300,17 +390,18 @@ async def pump(path, dev, ui, states, tasks, focus):
         tasks.pop(path, None)
         return
     st = states[path] = State()
+    held = set()  # non-middle buttons we're currently holding down virtually
     log.info("grabbed %s (%s)", dev.name, path)
     try:
         async for ev in dev.async_read_loop():
             if ev.type == e.EV_KEY and ev.code == e.BTN_MIDDLE:
                 if ev.value == 1:
                     if focus.blocked:
-                        # A blacklisted app owns middle-drag; hand the
+                        # A blacklisted app owns middle-drag; pass the
                         # button straight through, held state and all.
                         st.passthrough = True
                         log.debug("middle press passed through (%r focused)",
-                                  focus.wclass)
+                                  next(iter(focus.by_client.values()), ""))
                         ui.write(e.EV_KEY, e.BTN_MIDDLE, 1)
                     else:
                         st.press()
@@ -327,11 +418,10 @@ async def pump(path, dev, ui, states, tasks, focus):
                 continue
             if (ev.type == e.EV_REL and (st.pending or st.active)
                     and ev.code in (e.REL_X, e.REL_Y)):
-                # Swallow cursor motion while the middle button is held:
-                # the pointer stays anchored at the press point, so scroll
-                # events keep hitting the original window instead of
-                # whatever the cursor would have drifted over (taskbar,
-                # browser tabs, ...), same lock-to-target as Windows.
+                # Swallow cursor motion while the middle button is held so
+                # the pointer stays anchored at the press point. Scroll
+                # events then keep hitting the original window instead of
+                # whatever the cursor would have drifted over.
                 if ev.code == e.REL_X:
                     st.dx = _clamp(st.dx + ev.value)
                 else:
@@ -339,23 +429,27 @@ async def pump(path, dev, ui, states, tasks, focus):
                 continue
             if ev.type == e.EV_SYN:
                 if ev.code == e.SYN_DROPPED:
-                    # Kernel dropped events on us. If the middle-button
-                    # release was among them, end the scroll (or the
-                    # passthrough hold) so it can't run away.
-                    if e.BTN_MIDDLE not in dev.active_keys():
-                        if st.passthrough:
-                            st.passthrough = False
-                            ui.write(e.EV_KEY, e.BTN_MIDDLE, 0)
-                            ui.syn()
-                        elif st.pending or st.active:
-                            st.release()
+                    _resync(ui, dev, held, st)
                 else:
                     ui.syn()
             elif ev.type in (e.EV_KEY, e.EV_REL):
+                if ev.type == e.EV_KEY:
+                    if ev.value == 1:
+                        held.add(ev.code)
+                    elif ev.value == 0:
+                        held.discard(ev.code)
                 ui.write(ev.type, ev.code, ev.value)
     except OSError:
         pass  # device unplugged
     finally:
+        # Don't leave a button stuck down on the virtual device if the real
+        # one vanished mid-press.
+        if held or st.passthrough:
+            for code in held:
+                ui.write(e.EV_KEY, code, 0)
+            if st.passthrough:
+                ui.write(e.EV_KEY, e.BTN_MIDDLE, 0)
+            ui.syn()
         st.reset()
         try:
             dev.close()
@@ -370,11 +464,19 @@ def is_mouse(dev):
     if "midscroll" in dev.name.lower():
         return False
     caps = dev.capabilities()
-    # Plain relative mice only: middle button + relative X, and no absolute
-    # axes (excludes touchpads, tablets, touchscreens).
-    return (e.BTN_MIDDLE in caps.get(e.EV_KEY, ())
-            and e.REL_X in caps.get(e.EV_REL, ())
-            and e.EV_ABS not in caps)
+    keys = caps.get(e.EV_KEY, ())
+    rels = caps.get(e.EV_REL, ())
+    # EV_ABS capabilities are (code, AbsInfo) pairs; pull out the codes.
+    abs_codes = {a[0] if isinstance(a, tuple) else a
+                 for a in caps.get(e.EV_ABS, ())}
+    # A plain relative mouse: middle button + relative X. Exclude only
+    # devices with a pointing absolute axis (touchpads, touchscreens,
+    # tablets); a stray unrelated ABS axis on a gaming mouse or receiver
+    # is fine.
+    return (e.BTN_MIDDLE in keys
+            and e.REL_X in rels
+            and e.ABS_X not in abs_codes
+            and e.ABS_MT_POSITION_X not in abs_codes)
 
 
 async def main():
@@ -393,7 +495,7 @@ async def main():
     states = {}
     tasks = {}
     seen = set()
-    tick_task = asyncio.create_task(ticker(ui, states, notifier))
+    tick_task = asyncio.create_task(ticker(ui, states, notifier, focus))
     log.info("running")
     try:
         while True:

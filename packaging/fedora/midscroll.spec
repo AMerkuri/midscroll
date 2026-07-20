@@ -1,5 +1,5 @@
 Name:           midscroll
-Version:        1.4
+Version:        1.5
 Release:        1%{?dist}
 Summary:        Windows-style middle-button drag autoscroll
 License:        Unlicense
@@ -76,6 +76,19 @@ fi
 %config(noreplace) %{_sysconfdir}/midscroll.conf
 
 %changelog
+* Mon Jul 20 2026 midscroll - 1.5-1
+- Only trust focus reports from a logged-in user's helper (peer-credential
+  check on the state socket), so a stray local process can't pause the
+  daemon
+- Track focus per helper: a second session or a stale helper exiting no
+  longer wipes the live one's focus
+- Keep enforcing the app blacklist during a drag, not just at press time,
+  so switching into a blacklisted app stops an in-progress scroll
+- Resync held buttons after dropped kernel events so a button can't stick
+- Time the scroll ticks by the monotonic clock, so speed holds under load
+- is_mouse only excludes real pointing-absolute devices, not any device
+  with a stray absolute axis
+
 * Mon Jul 20 2026 midscroll - 1.4-1
 - Per-device scroll state (multiple mice can no longer corrupt each other)
 - App blacklist: pause automatically over apps that use middle-drag
