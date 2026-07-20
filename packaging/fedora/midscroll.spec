@@ -1,5 +1,5 @@
 Name:           midscroll
-Version:        1.9
+Version:        1.10
 Release:        1%{?dist}
 Summary:        Windows-style middle-button drag autoscroll
 License:        Unlicense
@@ -15,7 +15,7 @@ Source6:        move-vertical.svg
 Source7:        LICENSE
 Source8:        midscroll-settings.py
 Source9:        midscroll-apply.py
-Source10:       midscroll-settings.desktop
+Source10:       io.github.gnhen.midscroll.Settings.desktop
 Source11:       io.github.gnhen.midscroll.policy
 
 Requires:       python3
@@ -49,11 +49,14 @@ install -Dm644 %{SOURCE3} %{buildroot}%{_docdir}/midscroll/README.md
 install -Dm755 %{SOURCE4} %{buildroot}%{_bindir}/midscroll-overlay
 install -Dm644 %{SOURCE5} %{buildroot}%{_userunitdir}/midscroll-overlay.service
 install -Dm644 %{SOURCE6} %{buildroot}%{_datadir}/midscroll/move-vertical.svg
+# Same artwork as the scroll badge, as the app's themed icon.
+install -Dm644 %{SOURCE6} \
+    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/midscroll.svg
 install -Dm644 %{SOURCE7} %{buildroot}%{_licensedir}/midscroll/LICENSE
 install -Dm755 %{SOURCE8} %{buildroot}%{_bindir}/midscroll-settings
 install -Dm755 %{SOURCE9} %{buildroot}%{_bindir}/midscroll-apply
 install -Dm644 %{SOURCE10} \
-    %{buildroot}%{_datadir}/applications/midscroll-settings.desktop
+    %{buildroot}%{_datadir}/applications/io.github.gnhen.midscroll.Settings.desktop
 install -Dm644 %{SOURCE11} \
     %{buildroot}%{_datadir}/polkit-1/actions/io.github.gnhen.midscroll.policy
 install -d %{buildroot}%{_userpresetdir}
@@ -87,11 +90,19 @@ fi
 %{_userunitdir}/midscroll-overlay.service
 %{_userpresetdir}/90-midscroll.preset
 %{_datadir}/midscroll/move-vertical.svg
-%{_datadir}/applications/midscroll-settings.desktop
+%{_datadir}/icons/hicolor/scalable/apps/midscroll.svg
+%{_datadir}/applications/io.github.gnhen.midscroll.Settings.desktop
 %{_datadir}/polkit-1/actions/io.github.gnhen.midscroll.policy
 %config(noreplace) %{_sysconfdir}/midscroll.conf
 
 %changelog
+* Mon Jul 20 2026 midscroll - 1.10-1
+- Fix the scroll badge and app blacklist regressing under 1.8's overlay
+  sandbox: drop PrivateTmp, which broke kdotool (it hands KWin a script via
+  a /tmp path the compositor must read)
+- Use the scroll-arrows badge artwork as the settings app icon (themed
+  hicolor icon; desktop file renamed to the app ID so the window icon maps)
+
 * Mon Jul 20 2026 midscroll - 1.9-1
 - Bound and sanitize the BLACKLIST value in midscroll-apply (the only
   free-text field crossing the pkexec boundary): strip non-window-class

@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 repo=$(cd ../.. && pwd)
 
-version=1.9-1
+version=1.10-1
 maintainer=${DEB_MAINTAINER:-"midscroll maintainers <noreply@example.com>"}
 
 work=$(mktemp -d)
@@ -20,8 +20,8 @@ install -Dm755 "$repo/midscroll.py" "$stage/usr/bin/midscroll"
 install -Dm755 "$repo/midscroll-overlay.py" "$stage/usr/bin/midscroll-overlay"
 install -Dm755 "$repo/midscroll-settings.py" "$stage/usr/bin/midscroll-settings"
 install -Dm755 "$repo/midscroll-apply.py" "$stage/usr/bin/midscroll-apply"
-install -Dm644 "$repo/midscroll-settings.desktop" \
-    "$stage/usr/share/applications/midscroll-settings.desktop"
+install -Dm644 "$repo/io.github.gnhen.midscroll.Settings.desktop" \
+    "$stage/usr/share/applications/io.github.gnhen.midscroll.Settings.desktop"
 install -Dm644 "$repo/io.github.gnhen.midscroll.policy" \
     "$stage/usr/share/polkit-1/actions/io.github.gnhen.midscroll.policy"
 install -Dm644 "$repo/systemd/midscroll.service" \
@@ -30,6 +30,8 @@ install -Dm644 "$repo/systemd/midscroll-overlay.service" \
     "$stage/usr/lib/systemd/user/midscroll-overlay.service"
 install -Dm644 "$repo/icons/move-vertical.svg" \
     "$stage/usr/share/midscroll/move-vertical.svg"
+install -Dm644 "$repo/icons/move-vertical.svg" \
+    "$stage/usr/share/icons/hicolor/scalable/apps/midscroll.svg"
 install -Dm644 "$repo/midscroll.conf" "$stage/etc/midscroll.conf"
 install -Dm644 "$repo/README.md" "$stage/usr/share/doc/midscroll/README.md"
 install -Dm644 "$repo/LICENSE" "$stage/usr/share/doc/midscroll/copyright"

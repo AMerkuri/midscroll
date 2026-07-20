@@ -1,5 +1,5 @@
 pkgname=midscroll
-pkgver=1.9
+pkgver=1.10
 pkgrel=1
 pkgdesc="Windows-style middle-button drag autoscroll (kernel-level, works on Wayland and X11)"
 arch=('any')
@@ -18,8 +18,8 @@ package() {
     install -Dm755 midscroll-overlay.py "$pkgdir/usr/bin/midscroll-overlay"
     install -Dm755 midscroll-settings.py "$pkgdir/usr/bin/midscroll-settings"
     install -Dm755 midscroll-apply.py "$pkgdir/usr/bin/midscroll-apply"
-    install -Dm644 midscroll-settings.desktop \
-        "$pkgdir/usr/share/applications/midscroll-settings.desktop"
+    install -Dm644 io.github.gnhen.midscroll.Settings.desktop \
+        "$pkgdir/usr/share/applications/io.github.gnhen.midscroll.Settings.desktop"
     install -Dm644 io.github.gnhen.midscroll.policy \
         "$pkgdir/usr/share/polkit-1/actions/io.github.gnhen.midscroll.policy"
     install -Dm644 systemd/midscroll.service \
@@ -28,6 +28,8 @@ package() {
         "$pkgdir/usr/lib/systemd/user/midscroll-overlay.service"
     install -Dm644 icons/move-vertical.svg \
         "$pkgdir/usr/share/midscroll/move-vertical.svg"
+    install -Dm644 icons/move-vertical.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/midscroll.svg"
     install -Dm644 midscroll.conf "$pkgdir/etc/midscroll.conf"
     install -Dm644 README.md "$pkgdir/usr/share/doc/midscroll/README.md"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/midscroll/LICENSE"

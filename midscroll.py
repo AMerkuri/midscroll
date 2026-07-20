@@ -38,7 +38,7 @@ import time
 
 from evdev import InputDevice, UInput, ecodes as e, list_devices
 
-VERSION = "1.9"
+VERSION = "1.10"
 
 log = logging.getLogger("midscroll")
 

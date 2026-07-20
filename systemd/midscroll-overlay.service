@@ -13,10 +13,12 @@ RestartSec=2
 # needs left open. Deliberately absent: MemoryDenyWriteExecute (GTK + GL/
 # Vulkan map writable-executable pages), PrivateNetwork/tighter address
 # families (keep AF_UNIX for Wayland/X and the session bus, AF_NETLINK for
-# device and GL enumeration), and ProtectHome (GTK/fontconfig read ~/.cache).
+# device and GL enumeration), ProtectHome (GTK/fontconfig read ~/.cache),
+# and PrivateTmp (kdotool hands KWin a script via a /tmp path that the
+# compositor must read, so a private /tmp breaks the badge and focus
+# reporting).
 NoNewPrivileges=yes
 ProtectSystem=strict
-PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectKernelLogs=yes
 ProtectControlGroups=yes

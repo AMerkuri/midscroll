@@ -13,14 +13,16 @@ install -Dm755 midscroll.py /usr/bin/midscroll
 install -Dm755 midscroll-overlay.py /usr/bin/midscroll-overlay
 install -Dm755 midscroll-settings.py /usr/bin/midscroll-settings
 install -Dm755 midscroll-apply.py /usr/bin/midscroll-apply
-install -Dm644 midscroll-settings.desktop \
-    /usr/share/applications/midscroll-settings.desktop
+install -Dm644 io.github.gnhen.midscroll.Settings.desktop \
+    /usr/share/applications/io.github.gnhen.midscroll.Settings.desktop
 install -Dm644 io.github.gnhen.midscroll.policy \
     /usr/share/polkit-1/actions/io.github.gnhen.midscroll.policy
 install -Dm644 systemd/midscroll.service /etc/systemd/system/midscroll.service
 install -Dm644 systemd/midscroll-overlay.service \
     /usr/lib/systemd/user/midscroll-overlay.service
 install -Dm644 icons/move-vertical.svg /usr/share/midscroll/move-vertical.svg
+install -Dm644 icons/move-vertical.svg \
+    /usr/share/icons/hicolor/scalable/apps/midscroll.svg
 # Don't clobber an existing tuned config
 [ -f /etc/midscroll.conf ] || install -Dm644 midscroll.conf /etc/midscroll.conf
 
