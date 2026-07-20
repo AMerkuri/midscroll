@@ -1,12 +1,12 @@
 pkgname=midscroll
-pkgver=1.6
+pkgver=1.7
 pkgrel=1
 pkgdesc="Windows-style middle-button drag autoscroll (kernel-level, works on Wayland and X11)"
 arch=('any')
 url="https://github.com/gnhen/midscroll"
 license=('Unlicense')
 depends=('python' 'python-evdev' 'python-gobject' 'python-cairo' 'gtk4'
-         'gtk4-layer-shell' 'librsvg')
+         'gtk4-layer-shell' 'librsvg' 'polkit')
 optdepends=('kdotool: scroll badge and Wayland focus detection (AUR)'
             'xorg-xprop: focus detection on X11 (app blacklist)')
 install=midscroll.install
@@ -16,6 +16,10 @@ package() {
     cd "$startdir/../.."
     install -Dm755 midscroll.py "$pkgdir/usr/bin/midscroll"
     install -Dm755 midscroll-overlay.py "$pkgdir/usr/bin/midscroll-overlay"
+    install -Dm755 midscroll-settings.py "$pkgdir/usr/bin/midscroll-settings"
+    install -Dm755 midscroll-apply.py "$pkgdir/usr/bin/midscroll-apply"
+    install -Dm644 midscroll-settings.desktop \
+        "$pkgdir/usr/share/applications/midscroll-settings.desktop"
     install -Dm644 systemd/midscroll.service \
         "$pkgdir/usr/lib/systemd/system/midscroll.service"
     install -Dm644 systemd/midscroll-overlay.service \

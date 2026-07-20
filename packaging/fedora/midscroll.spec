@@ -1,5 +1,5 @@
 Name:           midscroll
-Version:        1.6
+Version:        1.7
 Release:        1%{?dist}
 Summary:        Windows-style middle-button drag autoscroll
 License:        Unlicense
@@ -13,16 +13,21 @@ Source4:        midscroll-overlay.py
 Source5:        midscroll-overlay.service
 Source6:        move-vertical.svg
 Source7:        LICENSE
+Source8:        midscroll-settings.py
+Source9:        midscroll-apply.py
+Source10:       midscroll-settings.desktop
 
 Requires:       python3
 Requires:       python3-evdev
-# Overlay (session helper showing the scroll badge during a drag)
+# Overlay and settings GUI (GTK)
 Requires:       python3-gobject
 Requires:       python3-cairo
 Requires:       gtk4
 Requires:       gtk4-layer-shell
 Requires:       librsvg2
 Requires:       kdotool
+# Settings GUI applies changes as root through pkexec
+Requires:       polkit
 # Focus detection on X11 sessions (app blacklist)
 Recommends:     xprop
 %{?systemd_requires}
@@ -33,7 +38,7 @@ Hold the middle mouse button and drag to scroll, with speed proportional
 to drag distance, like Windows 10/11. Works on Wayland and X11 in every
 application by operating at the kernel input layer (evdev/uinput).
 Includes a session overlay that shows a scroll badge at the anchored
-cursor while a drag-scroll is active.
+cursor while a drag-scroll is active, and a GTK settings GUI.
 
 %install
 install -Dm755 %{SOURCE0} %{buildroot}%{_bindir}/midscroll
@@ -44,6 +49,10 @@ install -Dm755 %{SOURCE4} %{buildroot}%{_bindir}/midscroll-overlay
 install -Dm644 %{SOURCE5} %{buildroot}%{_userunitdir}/midscroll-overlay.service
 install -Dm644 %{SOURCE6} %{buildroot}%{_datadir}/midscroll/move-vertical.svg
 install -Dm644 %{SOURCE7} %{buildroot}%{_licensedir}/midscroll/LICENSE
+install -Dm755 %{SOURCE8} %{buildroot}%{_bindir}/midscroll-settings
+install -Dm755 %{SOURCE9} %{buildroot}%{_bindir}/midscroll-apply
+install -Dm644 %{SOURCE10} \
+    %{buildroot}%{_datadir}/applications/midscroll-settings.desktop
 install -d %{buildroot}%{_userpresetdir}
 echo "enable midscroll-overlay.service" \
     > %{buildroot}%{_userpresetdir}/90-midscroll.preset
@@ -69,13 +78,24 @@ fi
 %doc %{_docdir}/midscroll/README.md
 %{_bindir}/midscroll
 %{_bindir}/midscroll-overlay
+%{_bindir}/midscroll-settings
+%{_bindir}/midscroll-apply
 %{_unitdir}/midscroll.service
 %{_userunitdir}/midscroll-overlay.service
 %{_userpresetdir}/90-midscroll.preset
 %{_datadir}/midscroll/move-vertical.svg
+%{_datadir}/applications/midscroll-settings.desktop
 %config(noreplace) %{_sysconfdir}/midscroll.conf
 
 %changelog
+* Mon Jul 20 2026 midscroll - 1.7-1
+- Settings GUI (midscroll-settings): a GTK window to change every tunable -
+  speed, dead zone, event rate, natural scrolling, the app blacklist and
+  the new toggle mode - applied via pkexec with an automatic daemon restart
+- Toggle mode (TOGGLE_MODE): click the middle button once to start
+  autoscroll and again, or any click, to stop it (Windows-Explorer /
+  Firefox style) instead of holding and dragging (issue #1 feature request)
+
 * Mon Jul 20 2026 midscroll - 1.6-1
 - Preserve per-mouse pointer settings: mirror each mouse through its own
   uinput device that copies the source name/vendor/product, so libinput and

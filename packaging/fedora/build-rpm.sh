@@ -9,6 +9,8 @@ trap 'rm -rf "$work"' EXIT
 
 # rpmbuild wants flat sources
 cp "$repo"/midscroll.py "$repo"/midscroll-overlay.py "$repo"/midscroll.conf \
+   "$repo"/midscroll-settings.py "$repo"/midscroll-apply.py \
+   "$repo"/midscroll-settings.desktop \
    "$repo"/README.md "$repo"/LICENSE \
    "$repo"/systemd/midscroll.service "$repo"/systemd/midscroll-overlay.service \
    "$repo"/icons/move-vertical.svg "$work"/

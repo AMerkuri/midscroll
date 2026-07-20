@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=midscroll Settings
+GenericName=Autoscroll Settings
+Comment=Configure midscroll middle-drag autoscroll
+Exec=midscroll-settings
+Icon=input-mouse
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=mouse;scroll;autoscroll;wheel;
+StartupNotify=true

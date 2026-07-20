@@ -8,6 +8,11 @@ Release to stop. A quick middle click without dragging still works as a
 normal middle click (paste, open link in new tab). Diagonal drags scroll
 both axes, so it pans wide pages too.
 
+Prefer clicking to holding? Turn on **toggle mode** (in the settings GUI or
+`TOGGLE_MODE = true`) for the Windows-Explorer / Firefox style instead: one
+middle click starts autoscroll, the cursor moves freely, and any click
+stops it.
+
 It works in every app, on Wayland and X11, because it operates at the
 kernel input layer (evdev in, uinput out) instead of hooking any
 particular desktop or toolkit.
@@ -68,9 +73,18 @@ and `midscroll-overlay` (per-user, the badge). Package installs enable
 both; the overlay starts at your next login, or immediately with
 `systemctl --user start midscroll-overlay`.
 
+## Settings GUI
+
+Search your app menu for **midscroll Settings** (or run `midscroll-settings`)
+for a GTK window that changes every setting — speed, dead zone, event rate,
+natural scrolling, the app blacklist and toggle mode — with sliders and
+switches. Clicking **Apply** asks for admin authorization (via pkexec),
+writes `/etc/midscroll.conf` and restarts the daemon for you.
+
 ## Tuning
 
-Edit `/etc/midscroll.conf`, then `sudo systemctl restart midscroll`:
+Prefer a text file? Edit `/etc/midscroll.conf`, then
+`sudo systemctl restart midscroll`:
 
 ```
 DEADZONE_PX = 15          # per-axis dead zone in pixels
@@ -79,6 +93,7 @@ SPEED_EXP = 2.2           # curve shape (bigger = more extreme at long drags)
 PX_PER_NOTCH = 55         # px one wheel notch scrolls in your apps
 TICK_HZ = 90              # scroll event rate (higher = smoother)
 NATURAL = false           # true = inverted / touchscreen-style direction
+TOGGLE_MODE = false       # true = click to start/stop instead of hold-drag
 BLACKLIST = freecad, orcaslicer, minecraft
                           # window-class substrings that pause midscroll
                           # (apps with native middle-drag); '' disables
@@ -98,8 +113,8 @@ midscroll --help          # full option list
 ```
 
 `--debug` turns on debug logging (device probing, focus changes, scroll
-starts); `--blacklist "app1, app2"` and `--natural` / `--no-natural`
-toggle the corresponding behaviors.
+starts); `--blacklist "app1, app2"`, `--natural` / `--no-natural` and
+`--toggle-mode` / `--no-toggle-mode` toggle the corresponding behaviors.
 
 ## Pause / uninstall
 

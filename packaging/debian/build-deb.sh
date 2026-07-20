@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 repo=$(cd ../.. && pwd)
 
-version=1.6-1
+version=1.7-1
 maintainer=${DEB_MAINTAINER:-"midscroll maintainers <noreply@example.com>"}
 
 work=$(mktemp -d)
@@ -18,6 +18,10 @@ stage="$work/stage"
 
 install -Dm755 "$repo/midscroll.py" "$stage/usr/bin/midscroll"
 install -Dm755 "$repo/midscroll-overlay.py" "$stage/usr/bin/midscroll-overlay"
+install -Dm755 "$repo/midscroll-settings.py" "$stage/usr/bin/midscroll-settings"
+install -Dm755 "$repo/midscroll-apply.py" "$stage/usr/bin/midscroll-apply"
+install -Dm644 "$repo/midscroll-settings.desktop" \
+    "$stage/usr/share/applications/midscroll-settings.desktop"
 install -Dm644 "$repo/systemd/midscroll.service" \
     "$stage/usr/lib/systemd/system/midscroll.service"
 install -Dm644 "$repo/systemd/midscroll-overlay.service" \
@@ -35,7 +39,7 @@ Version: $version
 Section: utils
 Priority: optional
 Architecture: all
-Depends: python3, python3-evdev, python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, libgtk4-layer-shell0, gir1.2-gtk4layershell-1.0, librsvg2-common
+Depends: python3, python3-evdev, python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, libgtk4-layer-shell0, gir1.2-gtk4layershell-1.0, librsvg2-common, polkitd | policykit-1
 Recommends: kdotool, x11-utils
 Maintainer: $maintainer
 Description: Windows-style middle-button drag autoscroll

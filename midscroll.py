@@ -1,10 +1,15 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """midscroll - Windows-style middle-button drag autoscroll for Linux.
 
 Hold the middle mouse button and drag: the page scrolls in that direction,
 and the farther you drag from the point where you pressed, the faster it
 scrolls. Release to stop. A quick middle click without dragging passes
 through as a normal middle click (paste / open link in new tab).
+
+With TOGGLE_MODE enabled the interaction is instead the Windows-Explorer /
+Firefox style: a single middle click starts autoscroll, the cursor then
+moves freely and the page scrolls by its distance from that origin, and any
+mouse click stops it. (In that mode the middle button no longer pastes.)
 
 Works on Wayland and X11 in any application, because it sits at the kernel
 input layer: it grabs the real mouse and re-emits its events through a
@@ -33,7 +38,7 @@ import time
 
 from evdev import InputDevice, UInput, ecodes as e, list_devices
 
-VERSION = "1.6"
+VERSION = "1.7"
 
 log = logging.getLogger("midscroll")
 
@@ -50,6 +55,7 @@ PX_PER_NOTCH = 55.0       # how many px one wheel notch scrolls in your apps
 MAX_DRAG_PX = 1200.0      # cap on effective drag distance (~screen height)
 TICK_HZ = 90.0            # scroll event rate (higher = smoother)
 NATURAL = False           # True inverts scroll direction
+TOGGLE_MODE = False       # True: click to start/stop instead of hold-and-drag
 
 # Window-class substrings (case-insensitive) over which midscroll pauses
 # and the middle button behaves natively.
@@ -64,9 +70,14 @@ SOCK_PATH = SOCK_DIR + "/state.sock"
 
 FLOAT_KEYS = {"DEADZONE_PX", "TICK_HZ", "SPEED_MULT", "SPEED_EXP",
               "MAX_PX_PER_SEC", "PX_PER_NOTCH", "MAX_DRAG_PX"}
+BOOL_KEYS = {"NATURAL", "TOGGLE_MODE"}
 # Zero would divide by zero (TICK_HZ, PX_PER_NOTCH) or make the daemon
 # silently never scroll; only the dead zone may be zero.
 POSITIVE_KEYS = FLOAT_KEYS - {"DEADZONE_PX"}
+
+
+def parse_bool(text):
+    return text.strip().lower() in ("1", "true", "yes", "on")
 
 
 def validate(key, val):
@@ -108,8 +119,8 @@ def load_config(path=CONFIG_PATH):
                           k, val, err, globals()[k])
                 continue
             globals()[k] = val
-        elif k == "NATURAL":
-            globals()["NATURAL"] = v.lower() in ("1", "true", "yes", "on")
+        elif k in BOOL_KEYS:
+            globals()[k] = parse_bool(v)
         elif k == "BLACKLIST":
             globals()["BLACKLIST"] = parse_blacklist(v)
         else:
@@ -260,18 +271,30 @@ class State:
 
     def reset(self):
         self.pending = False      # middle held, deadzone not yet exceeded
-        self.active = False       # scrolling
+        self.active = False       # hold-drag scrolling
+        self.toggled = False      # toggle-mode scrolling (no button held)
         self.passthrough = False  # middle held over a blacklisted app
-        self.dx = 0.0             # cursor offset from the press point
+        self.eat_release = None   # button whose release to swallow (toggle)
+        self.dx = 0.0             # cursor offset from the origin
         self.dy = 0.0
         self.acc_v = 0.0          # fractional hi-res units carried over
         self.acc_h = 0.0
         self.notch_v = 0.0        # hi-res units accumulated toward a notch
         self.notch_h = 0.0
 
+    @property
+    def scrolling(self):
+        """True whenever scroll events should be emitted this tick."""
+        return self.active or self.toggled
+
     def press(self):
         self.reset()
         self.pending = True
+
+    def begin_toggle(self):
+        """Start toggle-mode autoscroll, anchored at the current point."""
+        self.reset()
+        self.toggled = True
 
     def release(self):
         """Return True if this was a plain click (no drag)."""
@@ -285,6 +308,19 @@ def _clamp(v):
     # distance on its own; cap it the way Windows caps the cursor at the
     # screen edge, so slowing down never needs a huge reverse drag.
     return math.copysign(min(abs(v), MAX_DRAG_PX), v)
+
+
+def _is_button(code):
+    """True for a mouse button code (BTN_LEFT/RIGHT/MIDDLE/SIDE/...)."""
+    return e.BTN_MOUSE <= code < e.BTN_JOYSTICK
+
+
+def _accumulate(st, ev):
+    """Fold a REL_X/REL_Y delta into the offset from the scroll origin."""
+    if ev.code == e.REL_X:
+        st.dx = _clamp(st.dx + ev.value)
+    else:
+        st.dy = _clamp(st.dy + ev.value)
 
 
 def speed_px(offset):
@@ -314,22 +350,23 @@ async def ticker(states, notifier, focus):
                 tick(st, dt, focus)
             except Exception as err:  # one bad tick must not kill the loop
                 log.error("tick error: %r", err)
-        notifier.set(any(st.active for st in states.values()))
+        notifier.set(any(st.scrolling for st in states.values()))
 
 
 def tick(st, dt, focus):
     if focus.blocked:
-        # A blacklisted app is focused. Never scroll, and stop a drag that
-        # was already running (focus changed mid-drag) so it can't keep
+        # A blacklisted app is focused. Never scroll, and stop anything
+        # already running (focus changed mid-scroll) so it can't keep
         # scrolling under the blacklisted app.
-        if st.active or st.pending:
+        if st.scrolling or st.pending:
             st.reset()
         return
-    if st.pending and (abs(st.dx) > DEADZONE_PX or abs(st.dy) > DEADZONE_PX):
+    if (not TOGGLE_MODE and st.pending
+            and (abs(st.dx) > DEADZONE_PX or abs(st.dy) > DEADZONE_PX)):
         st.pending = False
         st.active = True
         log.debug("scroll started")
-    if not st.active:
+    if not st.scrolling:
         return
     ui = st.ui
     s = 1 if NATURAL else -1
@@ -418,6 +455,49 @@ def make_uinput(dev):
     )
 
 
+def _toggle_key(ev, st, ui, focus):
+    """Handle a mouse-button event in toggle mode.
+
+    Windows-Explorer style: a middle click starts autoscroll, then any
+    click stops it. Returns True if the event was consumed (swallowed),
+    False if it should be forwarded like a normal button press.
+    """
+    code = ev.code
+    # Finish swallowing the click that stopped autoscroll: eat its release
+    # so the app underneath never sees the stopping click.
+    if ev.value == 0 and st.eat_release == code:
+        st.eat_release = None
+        return True
+    if st.toggled:
+        # Autoscroll is running: any button press stops it, consumed so the
+        # click doesn't also land in whatever is under the cursor.
+        if ev.value == 1:
+            log.debug("toggle scroll stopped")
+            st.reset()
+            st.eat_release = code
+        return True
+    # Idle: only the middle button starts autoscroll.
+    if code == e.BTN_MIDDLE:
+        if ev.value == 1:
+            if focus.blocked:
+                st.passthrough = True
+                ui.write(e.EV_KEY, e.BTN_MIDDLE, 1)
+                ui.syn()
+            else:
+                st.pending = True
+        elif ev.value == 0:
+            if st.passthrough:
+                st.passthrough = False
+                ui.write(e.EV_KEY, e.BTN_MIDDLE, 0)
+                ui.syn()
+            elif st.pending:
+                st.pending = False
+                st.begin_toggle()
+                log.debug("toggle scroll started")
+        return True
+    return False  # other buttons while idle pass straight through
+
+
 async def pump(path, dev, states, tasks, focus, our_paths):
     """Grab one mouse and forward its events, intercepting middle-drags."""
     try:
@@ -442,7 +522,11 @@ async def pump(path, dev, states, tasks, focus, our_paths):
     log.info("grabbed %s (%s)", dev.name, path)
     try:
         async for ev in dev.async_read_loop():
-            if ev.type == e.EV_KEY and ev.code == e.BTN_MIDDLE:
+            if TOGGLE_MODE and ev.type == e.EV_KEY and _is_button(ev.code):
+                if _toggle_key(ev, st, ui, focus):
+                    continue
+                # An unrelated button while idle: fall through and forward it.
+            elif ev.type == e.EV_KEY and ev.code == e.BTN_MIDDLE:
                 if ev.value == 1:
                     if focus.blocked:
                         # A blacklisted app owns middle-drag; pass the
@@ -464,17 +548,21 @@ async def pump(path, dev, states, tasks, focus, our_paths):
                         ui.write(e.EV_KEY, e.BTN_MIDDLE, 0)
                         ui.syn()
                 continue
-            if (ev.type == e.EV_REL and (st.pending or st.active)
-                    and ev.code in (e.REL_X, e.REL_Y)):
-                # Swallow cursor motion while the middle button is held so
-                # the pointer stays anchored at the press point. Scroll
-                # events then keep hitting the original window instead of
-                # whatever the cursor would have drifted over.
-                if ev.code == e.REL_X:
-                    st.dx = _clamp(st.dx + ev.value)
-                else:
-                    st.dy = _clamp(st.dy + ev.value)
-                continue
+            if ev.type == e.EV_REL and ev.code in (e.REL_X, e.REL_Y):
+                if st.toggled:
+                    # Toggle mode: track distance from the origin but let the
+                    # motion through, so the cursor follows the hand like
+                    # Windows autoscroll.
+                    _accumulate(st, ev)
+                    ui.write(ev.type, ev.code, ev.value)
+                    continue
+                if st.pending or st.active:
+                    # Hold-drag: swallow cursor motion so the pointer stays
+                    # anchored at the press point. Scroll events then keep
+                    # hitting the original window instead of whatever the
+                    # cursor would have drifted over.
+                    _accumulate(st, ev)
+                    continue
             if ev.type == e.EV_SYN:
                 if ev.code == e.SYN_DROPPED:
                     _resync(ui, dev, held, st)
@@ -617,6 +705,10 @@ def parse_args(argv=None):
                         "scroll starts)")
     p.add_argument("--natural", action=argparse.BooleanOptionalAction,
                    default=None, help="invert the scroll direction")
+    p.add_argument("--toggle-mode", action=argparse.BooleanOptionalAction,
+                   default=None, dest="toggle_mode",
+                   help="click to start/stop autoscroll (Windows-Explorer "
+                        "style) instead of hold-and-drag")
     p.add_argument("--blacklist", metavar="APPS", default=None,
                    help="comma-separated window-class substrings over which "
                         "midscroll pauses (default: "
@@ -640,11 +732,13 @@ def cli():
             globals()[key] = val
     if args.natural is not None:
         globals()["NATURAL"] = args.natural
+    if args.toggle_mode is not None:
+        globals()["TOGGLE_MODE"] = args.toggle_mode
     if args.blacklist is not None:
         globals()["BLACKLIST"] = parse_blacklist(args.blacklist)
-    log.debug("tunables: %s NATURAL=%s BLACKLIST=%s",
+    log.debug("tunables: %s NATURAL=%s TOGGLE_MODE=%s BLACKLIST=%s",
               " ".join(f"{k}={globals()[k]:g}" for k in sorted(FLOAT_KEYS)),
-              NATURAL, BLACKLIST)
+              NATURAL, TOGGLE_MODE, BLACKLIST)
     asyncio.run(main())
 
 
