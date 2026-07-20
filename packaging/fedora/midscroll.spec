@@ -1,5 +1,5 @@
 Name:           midscroll
-Version:        1.5
+Version:        1.6
 Release:        1%{?dist}
 Summary:        Windows-style middle-button drag autoscroll
 License:        Unlicense
@@ -76,6 +76,13 @@ fi
 %config(noreplace) %{_sysconfdir}/midscroll.conf
 
 %changelog
+* Mon Jul 20 2026 midscroll - 1.6-1
+- Preserve per-mouse pointer settings: mirror each mouse through its own
+  uinput device that copies the source name/vendor/product, so libinput and
+  KDE no longer reset pointer speed and acceleration to defaults
+- Stop grabbing keyboards: require both REL_X and REL_Y so a device exposing
+  a stray pointer capability via media keys is no longer captured
+
 * Mon Jul 20 2026 midscroll - 1.5-1
 - Only trust focus reports from a logged-in user's helper (peer-credential
   check on the state socket), so a stray local process can't pause the

@@ -132,6 +132,12 @@ sudo dnf remove midscroll         # or apt remove / pacman -R
   (the poll interval), and stops an in-progress scroll too. If you press
   the middle button in that brief window right after switching, a short
   scroll may start before the daemon sees the new focus and stops it.
+- Pointer speed: each mouse is re-emitted through its own uinput mirror
+  that copies the real mouse's name and vendor/product IDs, so libinput and
+  KDE keep applying that mouse's own pointer-speed and acceleration
+  settings. If a specific mouse still loses its speed after enabling
+  midscroll, set it once more in *System Settings -> Mouse* while midscroll
+  is running (KDE stores it per device in `kcminputrc`) and it will stick.
 - If Firefox's built-in autoscroll is enabled (`general.autoScroll` in
   about:config), turn it off so the two don't fight. It's off by default
   on Linux.

@@ -8,8 +8,10 @@ through as a normal middle click (paste / open link in new tab).
 
 Works on Wayland and X11 in any application, because it sits at the kernel
 input layer: it grabs the real mouse and re-emits its events through a
-uinput virtual mouse, injecting high-resolution wheel events while a
-middle-drag is active.
+per-mouse uinput mirror, injecting high-resolution wheel events while a
+middle-drag is active. Each mirror copies its source mouse's name and
+vendor/product IDs, so libinput/KDE keep applying that mouse's own
+pointer-speed and acceleration settings instead of reverting to defaults.
 
 Apps that use middle-drag themselves (CAD, slicers, games) can be
 blacklisted by window class; while one of them is focused, the middle
@@ -31,7 +33,7 @@ import time
 
 from evdev import InputDevice, UInput, ecodes as e, list_devices
 
-VERSION = "1.5"
+VERSION = "1.6"
 
 log = logging.getLogger("midscroll")
 
@@ -55,7 +57,7 @@ BLACKLIST = ["freecad", "orcaslicer", "minecraft"]
 
 HIRES_PER_LINE = 120      # kernel convention: 120 hi-res units per notch
 MAX_TICK_DT = 0.25        # cap the per-tick time step (see ticker())
-VIRTUAL_NAME = "midscroll virtual mouse"
+PHYS_MARKER = "midscroll"  # phys string on our mirrors, so we skip our own
 CONFIG_PATH = "/etc/midscroll.conf"
 SOCK_DIR = "/run/midscroll"
 SOCK_PATH = SOCK_DIR + "/state.sock"
@@ -245,9 +247,15 @@ class Notifier:
 
 
 class State:
-    """Scroll session for one grabbed mouse."""
+    """Scroll session for one grabbed mouse.
 
-    def __init__(self):
+    ``ui`` is that mouse's own uinput mirror: scroll events for this session
+    are injected through it, and it carries the source mouse's identity so
+    the compositor keeps the mouse's per-device pointer settings.
+    """
+
+    def __init__(self, ui):
+        self.ui = ui
         self.reset()
 
     def reset(self):
@@ -291,7 +299,7 @@ def speed_px(offset):
     return math.copysign(min(v, MAX_PX_PER_SEC), offset)
 
 
-async def ticker(ui, states, notifier, focus):
+async def ticker(states, notifier, focus):
     # Measure the real time between ticks instead of assuming 1/TICK_HZ:
     # under load asyncio.sleep overshoots, and using the nominal step
     # would quietly make scrolling slower than configured.
@@ -303,13 +311,13 @@ async def ticker(ui, states, notifier, focus):
         last = now
         for st in list(states.values()):
             try:
-                tick(ui, st, dt, focus)
+                tick(st, dt, focus)
             except Exception as err:  # one bad tick must not kill the loop
                 log.error("tick error: %r", err)
         notifier.set(any(st.active for st in states.values()))
 
 
-def tick(ui, st, dt, focus):
+def tick(st, dt, focus):
     if focus.blocked:
         # A blacklisted app is focused. Never scroll, and stop a drag that
         # was already running (focus changed mid-drag) so it can't keep
@@ -323,6 +331,7 @@ def tick(ui, st, dt, focus):
         log.debug("scroll started")
     if not st.active:
         return
+    ui = st.ui
     s = 1 if NATURAL else -1
     to_hires = HIRES_PER_LINE / PX_PER_NOTCH
     # Drag down => wheel-down (negative REL_WHEEL); drag right => positive
@@ -380,7 +389,36 @@ def _resync(ui, dev, held, st):
         ui.syn()
 
 
-async def pump(path, dev, ui, states, tasks, focus):
+def make_uinput(dev):
+    """A uinput mirror that carries the source mouse's identity.
+
+    We grab the physical mouse and re-emit its events through this virtual
+    device, so the compositor sees the mirror - not the real mouse - as the
+    pointer. Copying the source's name and vendor/product/version lets
+    libinput and KDE match the user's existing per-device settings (pointer
+    speed, acceleration profile) to the mirror, rather than treating it as a
+    brand-new device and falling back to defaults. A distinctive phys string
+    lets us recognise and skip our own mirrors during hotplug.
+    """
+    caps = dev.capabilities(absinfo=False)
+    keys = set(caps.get(e.EV_KEY, ()))
+    keys |= set(range(e.BTN_MOUSE, e.BTN_JOYSTICK))  # all mouse button codes
+    rels = set(caps.get(e.EV_REL, ()))
+    rels |= {e.REL_X, e.REL_Y, e.REL_WHEEL, e.REL_HWHEEL,
+             e.REL_WHEEL_HI_RES, e.REL_HWHEEL_HI_RES}  # codes we inject
+    info = dev.info
+    return UInput(
+        {e.EV_KEY: sorted(keys), e.EV_REL: sorted(rels)},
+        name=dev.name,
+        vendor=info.vendor,
+        product=info.product,
+        version=info.version,
+        bustype=info.bustype,
+        phys=PHYS_MARKER,
+    )
+
+
+async def pump(path, dev, states, tasks, focus, our_paths):
     """Grab one mouse and forward its events, intercepting middle-drags."""
     try:
         dev.grab()
@@ -389,7 +427,17 @@ async def pump(path, dev, ui, states, tasks, focus):
         dev.close()
         tasks.pop(path, None)
         return
-    st = states[path] = State()
+    try:
+        ui = make_uinput(dev)
+    except OSError as err:
+        log.warning("cannot mirror %s: %s", dev.name, err)
+        dev.close()
+        tasks.pop(path, None)
+        return
+    mirror_path = ui.device.path if ui.device else None
+    if mirror_path:
+        our_paths.add(mirror_path)
+    st = states[path] = State(ui)
     held = set()  # non-middle buttons we're currently holding down virtually
     log.info("grabbed %s (%s)", dev.name, path)
     try:
@@ -451,6 +499,12 @@ async def pump(path, dev, ui, states, tasks, focus):
                 ui.write(e.EV_KEY, e.BTN_MIDDLE, 0)
             ui.syn()
         st.reset()
+        if mirror_path:
+            our_paths.discard(mirror_path)
+        try:
+            ui.close()
+        except OSError:
+            pass
         try:
             dev.close()
         except OSError:
@@ -461,51 +515,49 @@ async def pump(path, dev, ui, states, tasks, focus):
 
 
 def is_mouse(dev):
-    if "midscroll" in dev.name.lower():
-        return False
+    if PHYS_MARKER in (dev.phys or ""):
+        return False  # one of our own uinput mirrors
     caps = dev.capabilities()
     keys = caps.get(e.EV_KEY, ())
     rels = caps.get(e.EV_REL, ())
     # EV_ABS capabilities are (code, AbsInfo) pairs; pull out the codes.
     abs_codes = {a[0] if isinstance(a, tuple) else a
                  for a in caps.get(e.EV_ABS, ())}
-    # A plain relative mouse: middle button + relative X. Exclude only
-    # devices with a pointing absolute axis (touchpads, touchscreens,
-    # tablets); a stray unrelated ABS axis on a gaming mouse or receiver
-    # is fine.
+    # A plain relative mouse: middle button + both relative axes. Requiring
+    # REL_X *and* REL_Y is what excludes keyboards that expose a stray
+    # BTN_*/REL_X capability through a media or consumer-control collection
+    # (e.g. the Razer BlackWidow), which we were wrongly grabbing before.
+    # Exclude only devices with a pointing absolute axis (touchpads,
+    # touchscreens, tablets); a stray unrelated ABS axis on a gaming mouse or
+    # receiver is fine.
     return (e.BTN_MIDDLE in keys
             and e.REL_X in rels
+            and e.REL_Y in rels
             and e.ABS_X not in abs_codes
             and e.ABS_MT_POSITION_X not in abs_codes)
 
 
 async def main():
-    ui = UInput(
-        {
-            # All possible mouse button codes (0x110-0x11f).
-            e.EV_KEY: list(range(e.BTN_MOUSE, e.BTN_JOYSTICK)),
-            e.EV_REL: [e.REL_X, e.REL_Y, e.REL_WHEEL, e.REL_HWHEEL,
-                       e.REL_WHEEL_HI_RES, e.REL_HWHEEL_HI_RES],
-        },
-        name=VIRTUAL_NAME,
-    )
     focus = FocusFilter()
     notifier = Notifier(focus)
     await notifier.start()
     states = {}
     tasks = {}
     seen = set()
-    tick_task = asyncio.create_task(ticker(ui, states, notifier, focus))
+    our_paths = set()  # event nodes of our own uinput mirrors, never grabbed
+    tick_task = asyncio.create_task(ticker(states, notifier, focus))
     log.info("running")
     try:
         while True:
             # Hotplug: probe only paths we have never examined. Non-mouse
             # devices are remembered and never reopened (repeatedly opening
             # every input device caused visible input hiccups); a path is
-            # forgotten when it disappears, so replugging re-probes it.
+            # forgotten when it disappears, so replugging re-probes it. Our
+            # own mirror nodes are skipped so we never grab what we emit.
             paths = set(list_devices())
             seen &= paths
-            for path in sorted(paths - seen):
+            our_paths &= paths
+            for path in sorted(paths - seen - our_paths):
                 seen.add(path)
                 try:
                     dev = InputDevice(path)
@@ -513,14 +565,15 @@ async def main():
                     continue
                 if is_mouse(dev):
                     tasks[path] = asyncio.create_task(
-                        pump(path, dev, ui, states, tasks, focus))
+                        pump(path, dev, states, tasks, focus, our_paths))
                 else:
                     log.debug("ignoring %s (%s)", dev.name, path)
                     dev.close()
             await asyncio.sleep(2)
     finally:
         tick_task.cancel()
-        ui.close()
+        for t in list(tasks.values()):
+            t.cancel()
 
 
 def _float_arg(key):
