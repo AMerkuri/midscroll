@@ -10,15 +10,16 @@ RestartSec=2
 
 # Sandboxing. This helper LD_PRELOADs gtk4-layer-shell and shells out to
 # kdotool/xprop, so it gets the daemon's treatment minus what a GTK client
-# needs left open. Deliberately absent: MemoryDenyWriteExecute (GTK + GL/
-# Vulkan map writable-executable pages), PrivateNetwork/tighter address
-# families (keep AF_UNIX for Wayland/X and the session bus, AF_NETLINK for
-# device and GL enumeration), ProtectHome (GTK/fontconfig read ~/.cache),
-# and PrivateTmp (kdotool hands KWin a script via a /tmp path that the
-# compositor must read, so a private /tmp breaks the badge and focus
-# reporting).
+# and kdotool need left open. ProtectSystem is 'full' (not 'strict') and
+# PrivateTmp is off on purpose: kdotool writes a KWin script to /tmp and
+# hands the compositor that path, so it needs the real, shared, writable
+# /tmp - 'strict' makes /tmp read-only and a private /tmp is invisible to
+# KWin, and either one silently breaks the scroll badge and focus reporting.
+# Also deliberately absent: MemoryDenyWriteExecute (GTK + GL/Vulkan map
+# writable-executable pages) and tighter address families (keep AF_UNIX for
+# Wayland/X and the session bus, AF_NETLINK for device and GL enumeration).
 NoNewPrivileges=yes
-ProtectSystem=strict
+ProtectSystem=full
 ProtectKernelTunables=yes
 ProtectKernelLogs=yes
 ProtectControlGroups=yes

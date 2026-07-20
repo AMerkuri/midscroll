@@ -1,5 +1,5 @@
 Name:           midscroll
-Version:        1.10
+Version:        1.11
 Release:        1%{?dist}
 Summary:        Windows-style middle-button drag autoscroll
 License:        Unlicense
@@ -96,6 +96,13 @@ fi
 %config(noreplace) %{_sysconfdir}/midscroll.conf
 
 %changelog
+* Mon Jul 20 2026 midscroll - 1.11-1
+- Fix the scroll badge and app blacklist still missing under the overlay
+  sandbox: use ProtectSystem=full instead of strict (strict makes /tmp
+  read-only, so kdotool cannot write the KWin script it hands the compositor)
+- Open the settings window tall enough to show every control, capped to the
+  monitor height so it never runs off a small screen
+
 * Mon Jul 20 2026 midscroll - 1.10-1
 - Fix the scroll badge and app blacklist regressing under 1.8's overlay
   sandbox: drop PrivateTmp, which broke kdotool (it hands KWin a script via

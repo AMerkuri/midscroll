@@ -107,6 +107,11 @@ class Window(Gtk.ApplicationWindow):
         self.set_child(outer)
         scroller = Gtk.ScrolledWindow(vexpand=True)
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        # Open tall enough to show every control instead of a stub window;
+        # _fit_to_screen() then caps the height to the monitor so a small
+        # screen scrolls the overflow rather than running off-screen.
+        scroller.set_propagate_natural_height(True)
+        self.connect("realize", self._fit_to_screen)
         outer.append(scroller)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_margin_top(16)
@@ -143,6 +148,25 @@ class Window(Gtk.ApplicationWindow):
         outer.append(self.status)
 
         self.load()
+
+    def _fit_to_screen(self, *_):
+        """Size to the content, capped at the monitor's height."""
+        try:
+            display = self.get_display()
+            surface = self.get_surface()
+            monitor = (display.get_monitor_at_surface(surface)
+                       if surface else None)
+            if monitor is None:
+                monitors = display.get_monitors()
+                monitor = (monitors.get_item(0)
+                           if monitors.get_n_items() else None)
+            if monitor is None:
+                return
+            avail = int(monitor.get_geometry().height * 0.92)
+            _min, nat, _mb, _nb = self.measure(Gtk.Orientation.VERTICAL, 460)
+            self.set_default_size(460, min(nat, avail))
+        except Exception:
+            pass  # sizing is best-effort; never block the window from opening
 
     # ---- widget builders ----
     def _heading(self, text):
