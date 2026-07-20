@@ -1,5 +1,5 @@
 Name:           midscroll
-Version:        1.3
+Version:        1.4
 Release:        1%{?dist}
 Summary:        Windows-style middle-button drag autoscroll
 License:        Unlicense
@@ -23,6 +23,8 @@ Requires:       gtk4
 Requires:       gtk4-layer-shell
 Requires:       librsvg2
 Requires:       kdotool
+# Focus detection on X11 sessions (app blacklist)
+Recommends:     xprop
 %{?systemd_requires}
 BuildRequires:  systemd-rpm-macros
 
@@ -74,5 +76,12 @@ fi
 %config(noreplace) %{_sysconfdir}/midscroll.conf
 
 %changelog
+* Mon Jul 20 2026 midscroll - 1.4-1
+- Per-device scroll state (multiple mice can no longer corrupt each other)
+- App blacklist: pause automatically over apps that use middle-drag
+  themselves (default: FreeCAD, OrcaSlicer, Minecraft)
+- Command-line interface for overriding any tunable per run
+- Strict config validation, logging with --debug, systemd sandboxing
+
 * Mon Jul 20 2026 midscroll - 1.3-1
 - Initial public release

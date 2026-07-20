@@ -1,5 +1,5 @@
 [Unit]
-Description=midscroll overlay - scroll icon at the autoscroll anchor point
+Description=midscroll session helper - scroll badge and focus reporting
 After=graphical-session.target
 PartOf=graphical-session.target
 

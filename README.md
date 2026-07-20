@@ -22,6 +22,9 @@ Details:
   taskbar or another window can't steal it.
 - While a drag-scroll is active, a small badge with a vertical-arrows icon
   appears at the anchored cursor (KDE Plasma Wayland; see notes below).
+- Apps that use middle-drag themselves (FreeCAD, OrcaSlicer and Minecraft
+  by default) are blacklisted by window class: while one of them is
+  focused, midscroll pauses itself and the middle button behaves natively.
 
 ## Install
 
@@ -76,13 +79,36 @@ SPEED_EXP = 2.2           # curve shape (bigger = more extreme at long drags)
 PX_PER_NOTCH = 55         # px one wheel notch scrolls in your apps
 TICK_HZ = 90              # scroll event rate (higher = smoother)
 NATURAL = false           # true = inverted / touchscreen-style direction
+BLACKLIST = freecad, orcaslicer, minecraft
+                          # window-class substrings that pause midscroll
+                          # (apps with native middle-drag); '' disables
 ```
+
+Values are validated on load: rates and multipliers must be strictly
+positive, and anything out of bounds is rejected with a logged error while
+the default is kept.
+
+Every tunable can also be overridden per run on the command line, which is
+handy for trying values without editing the config:
+
+```
+sudo systemctl stop midscroll
+sudo midscroll --speed-mult 0.012 --tick-hz 120 --debug
+midscroll --help          # full option list
+```
+
+`--debug` turns on debug logging (device probing, focus changes, scroll
+starts); `--blacklist "app1, app2"` and `--natural` / `--no-natural`
+toggle the corresponding behaviors.
 
 ## Pause / uninstall
 
+Apps in `BLACKLIST` pause midscroll automatically while focused. For
+everything else:
+
 ```
-sudo systemctl stop midscroll     # pause (e.g. for Blender/CAD, which use
-sudo systemctl start midscroll    #   middle-drag themselves)
+sudo systemctl stop midscroll     # pause manually
+sudo systemctl start midscroll
 sudo dnf remove midscroll         # or apt remove / pacman -R
 ```
 
@@ -94,6 +120,12 @@ sudo dnf remove midscroll         # or apt remove / pacman -R
   (Wayland doesn't let a background process change the real pointer image,
   so the badge is drawn at the anchored cursor instead, which looks the
   same since the cursor doesn't move during a drag.)
+- The app blacklist needs the focused window's class, which the root
+  daemon can't see itself: the `midscroll-overlay` session service polls
+  it (once a second, only on change is it sent) via kdotool on KDE
+  Wayland or xprop on X11, and reports it to the daemon over the state
+  socket. No helper running (or another Wayland desktop) just means the
+  blacklist is inactive; focus changes take effect within about a second.
 - If Firefox's built-in autoscroll is enabled (`general.autoScroll` in
   about:config), turn it off so the two don't fight. It's off by default
   on Linux.

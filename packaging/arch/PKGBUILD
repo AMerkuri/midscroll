@@ -1,5 +1,5 @@
 pkgname=midscroll
-pkgver=1.3
+pkgver=1.4
 pkgrel=1
 pkgdesc="Windows-style middle-button drag autoscroll (kernel-level, works on Wayland and X11)"
 arch=('any')
@@ -7,7 +7,8 @@ url="https://github.com/gnhen/midscroll"
 license=('Unlicense')
 depends=('python' 'python-evdev' 'python-gobject' 'python-cairo' 'gtk4'
          'gtk4-layer-shell' 'librsvg')
-optdepends=('kdotool: scroll badge at the cursor while scrolling (AUR)')
+optdepends=('kdotool: scroll badge and Wayland focus detection (AUR)'
+            'xorg-xprop: focus detection on X11 (app blacklist)')
 install=midscroll.install
 source=()
 

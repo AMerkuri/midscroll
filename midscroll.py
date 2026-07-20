@@ -11,16 +11,28 @@ input layer: it grabs the real mouse and re-emits its events through a
 uinput virtual mouse, injecting high-resolution wheel events while a
 middle-drag is active.
 
-Tunables can be overridden in /etc/midscroll.conf (KEY = value lines).
+Apps that use middle-drag themselves (CAD, slicers, games) can be
+blacklisted by window class; while one of them is focused, the middle
+button passes straight through. The focused window's class is reported by
+the session helper (midscroll-overlay) over the state socket.
+
+Tunables can be overridden in /etc/midscroll.conf (KEY = value lines) or
+per run on the command line: midscroll --help.
 """
 
+import argparse
 import asyncio
+import logging
 import math
 import os
 
 from evdev import InputDevice, UInput, ecodes as e, list_devices
 
-# ---- Tuning (override in /etc/midscroll.conf) -----------------------------
+VERSION = "1.4"
+
+log = logging.getLogger("midscroll")
+
+# ---- Tuning (override in /etc/midscroll.conf or via CLI) ------------------
 # Speed curve from Chromium/Edge's AutoscrollController:
 #   velocity_px_per_sec = SPEED_MULT * |offset_px| ^ SPEED_EXP   (per axis)
 # with a 15 px per-axis dead zone. Chromium uses 0.000008 * d^2.2 in px/ms;
@@ -34,6 +46,10 @@ MAX_DRAG_PX = 1200.0      # cap on effective drag distance (~screen height)
 TICK_HZ = 90.0            # scroll event rate (higher = smoother)
 NATURAL = False           # True inverts scroll direction
 
+# Window-class substrings (case-insensitive) over which midscroll pauses
+# and the middle button behaves natively.
+BLACKLIST = ["freecad", "orcaslicer", "minecraft"]
+
 HIRES_PER_LINE = 120      # kernel convention: 120 hi-res units per notch
 VIRTUAL_NAME = "midscroll virtual mouse"
 CONFIG_PATH = "/etc/midscroll.conf"
@@ -42,10 +58,27 @@ SOCK_PATH = SOCK_DIR + "/state.sock"
 
 FLOAT_KEYS = {"DEADZONE_PX", "TICK_HZ", "SPEED_MULT", "SPEED_EXP",
               "MAX_PX_PER_SEC", "PX_PER_NOTCH", "MAX_DRAG_PX"}
+# Zero would mean a division by zero (TICK_HZ, PX_PER_NOTCH) or a daemon
+# that silently never scrolls; only the dead zone may be zero.
+POSITIVE_KEYS = FLOAT_KEYS - {"DEADZONE_PX"}
+
+
+def validate(key, val):
+    """Returns an error string if val is out of bounds for key, else None."""
+    if not math.isfinite(val):
+        return "must be a finite number"
+    if key in POSITIVE_KEYS and val <= 0:
+        return "must be strictly greater than zero"
+    if val < 0:
+        return "must not be negative"
+    return None
+
+
+def parse_blacklist(text):
+    return [p.strip().lower() for p in text.split(",") if p.strip()]
 
 
 def load_config(path=CONFIG_PATH):
-    global NATURAL
     try:
         with open(path) as f:
             lines = f.read().splitlines()
@@ -58,23 +91,61 @@ def load_config(path=CONFIG_PATH):
         k, v = (p.strip() for p in line.split("=", 1))
         if k in FLOAT_KEYS:
             try:
-                globals()[k] = float(v)
+                val = float(v)
             except ValueError:
-                print(f"midscroll: bad value for {k}: {v!r}", flush=True)
+                log.error("config: bad value for %s: %r (keeping %g)",
+                          k, v, globals()[k])
+                continue
+            err = validate(k, val)
+            if err:
+                log.error("config: %s = %g rejected: %s (keeping %g)",
+                          k, val, err, globals()[k])
+                continue
+            globals()[k] = val
         elif k == "NATURAL":
-            NATURAL = v.lower() in ("1", "true", "yes", "on")
+            globals()["NATURAL"] = v.lower() in ("1", "true", "yes", "on")
+        elif k == "BLACKLIST":
+            globals()["BLACKLIST"] = parse_blacklist(v)
+        else:
+            log.warning("config: unknown key %s", k)
 
 
-class Notifier:
-    """Tells overlay helpers when a drag-scroll is active.
+class FocusFilter:
+    """Latest focused-window class, as reported by the session helper.
 
-    Serves a unix socket that session helpers (midscroll-overlay) connect
-    to; sends b"1\\n" when scrolling starts and b"0\\n" when it stops (and
-    the current state on connect). Purely advisory: scrolling works fine
-    with no listeners, and a failure to bind the socket is non-fatal.
+    The root daemon cannot see session windows itself; midscroll-overlay
+    polls the compositor (kdotool on KDE, xprop on X11) and pushes
+    "focus <class>" lines over the state socket. With no helper connected
+    the class is empty and nothing is ever blocked.
     """
 
     def __init__(self):
+        self.wclass = ""
+
+    def update(self, wclass):
+        if wclass != self.wclass:
+            self.wclass = wclass
+            log.debug("focus: %r%s", wclass,
+                      " (blacklisted)" if self.blocked else "")
+
+    @property
+    def blocked(self):
+        c = self.wclass.lower()
+        return any(b in c for b in BLACKLIST)
+
+
+class Notifier:
+    """State socket shared with session helpers (midscroll-overlay).
+
+    Sends b"1\\n" when a drag-scroll starts and b"0\\n" when it stops (and
+    the current state on connect) so the helper can draw the badge; reads
+    "focus <window class>" lines back from the helper to drive the
+    blacklist. Purely advisory: scrolling works fine with no listeners,
+    and a failure to bind the socket is non-fatal.
+    """
+
+    def __init__(self, focus):
+        self.focus = focus
         self.writers = set()
         self.msg = b"0\n"
         self.server = None
@@ -90,18 +161,25 @@ class Notifier:
                 self._client, SOCK_PATH)
             os.chmod(SOCK_PATH, 0o666)  # any session user may listen
         except OSError as err:
-            print(f"midscroll: overlay socket unavailable: {err}", flush=True)
+            log.warning("overlay socket unavailable: %s", err)
 
     async def _client(self, reader, writer):
         self.writers.add(writer)
         try:
             writer.write(self.msg)
-            await reader.read()  # block until the client disconnects
-        except (OSError, ConnectionError):
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                line = line.decode("utf-8", "replace").strip()
+                if line.startswith("focus "):
+                    self.focus.update(line[len("focus "):])
+        except (OSError, ConnectionError, ValueError):
             pass
         finally:
             self.writers.discard(writer)
             writer.close()
+            self.focus.update("")  # helper gone; its last report is stale
 
     def set(self, active):
         msg = b"1\n" if active else b"0\n"
@@ -116,22 +194,21 @@ class Notifier:
 
 
 class State:
-    """One shared scroll session across all grabbed mice."""
+    """Scroll session for one grabbed mouse."""
 
-    def __init__(self, notifier):
-        self.notifier = notifier
+    def __init__(self):
         self.reset()
 
     def reset(self):
-        self.pending = False   # middle held, deadzone not yet exceeded
-        self.active = False    # scrolling
-        self.dx = 0.0          # cursor offset from the press point
+        self.pending = False      # middle held, deadzone not yet exceeded
+        self.active = False       # scrolling
+        self.passthrough = False  # middle held over a blacklisted app
+        self.dx = 0.0             # cursor offset from the press point
         self.dy = 0.0
-        self.acc_v = 0.0       # fractional hi-res units carried between ticks
+        self.acc_v = 0.0          # fractional hi-res units carried over
         self.acc_h = 0.0
-        self.notch_v = 0.0     # hi-res units accumulated toward a full notch
+        self.notch_v = 0.0        # hi-res units accumulated toward a notch
         self.notch_h = 0.0
-        self.notifier.set(False)
 
     def press(self):
         self.reset()
@@ -163,20 +240,22 @@ def speed_px(offset):
     return math.copysign(min(v, MAX_PX_PER_SEC), offset)
 
 
-async def ticker(ui, st):
+async def ticker(ui, states, notifier):
     while True:
         await asyncio.sleep(1.0 / TICK_HZ)
-        try:
-            tick(ui, st)
-        except Exception as err:  # one bad tick must not kill the loop
-            print(f"midscroll: tick error: {err!r}", flush=True)
+        for st in list(states.values()):
+            try:
+                tick(ui, st)
+            except Exception as err:  # one bad tick must not kill the loop
+                log.error("tick error: %r", err)
+        notifier.set(any(st.active for st in states.values()))
 
 
 def tick(ui, st):
     if st.pending and (abs(st.dx) > DEADZONE_PX or abs(st.dy) > DEADZONE_PX):
         st.pending = False
         st.active = True
-        st.notifier.set(True)
+        log.debug("scroll started")
     if not st.active:
         return
     dt = 1.0 / TICK_HZ
@@ -211,27 +290,40 @@ def tick(ui, st):
         ui.syn()
 
 
-async def pump(path, dev, ui, st, tasks):
+async def pump(path, dev, ui, states, tasks, focus):
     """Grab one mouse and forward its events, intercepting middle-drags."""
     try:
         dev.grab()
     except OSError as err:
-        print(f"midscroll: cannot grab {path}: {err}", flush=True)
+        log.warning("cannot grab %s: %s", path, err)
         dev.close()
         tasks.pop(path, None)
         return
-    print(f"midscroll: grabbed {dev.name} ({path})", flush=True)
+    st = states[path] = State()
+    log.info("grabbed %s (%s)", dev.name, path)
     try:
         async for ev in dev.async_read_loop():
             if ev.type == e.EV_KEY and ev.code == e.BTN_MIDDLE:
                 if ev.value == 1:
-                    st.press()
-                elif ev.value == 0 and st.release():
-                    # No drag happened: replay it as a normal middle click.
-                    ui.write(e.EV_KEY, e.BTN_MIDDLE, 1)
-                    ui.syn()
-                    ui.write(e.EV_KEY, e.BTN_MIDDLE, 0)
-                    ui.syn()
+                    if focus.blocked:
+                        # A blacklisted app owns middle-drag; hand the
+                        # button straight through, held state and all.
+                        st.passthrough = True
+                        log.debug("middle press passed through (%r focused)",
+                                  focus.wclass)
+                        ui.write(e.EV_KEY, e.BTN_MIDDLE, 1)
+                    else:
+                        st.press()
+                elif ev.value == 0:
+                    if st.passthrough:
+                        st.passthrough = False
+                        ui.write(e.EV_KEY, e.BTN_MIDDLE, 0)
+                    elif st.release():
+                        # No drag happened: replay as a normal middle click.
+                        ui.write(e.EV_KEY, e.BTN_MIDDLE, 1)
+                        ui.syn()
+                        ui.write(e.EV_KEY, e.BTN_MIDDLE, 0)
+                        ui.syn()
                 continue
             if (ev.type == e.EV_REL and (st.pending or st.active)
                     and ev.code in (e.REL_X, e.REL_Y)):
@@ -248,11 +340,15 @@ async def pump(path, dev, ui, st, tasks):
             if ev.type == e.EV_SYN:
                 if ev.code == e.SYN_DROPPED:
                     # Kernel dropped events on us. If the middle-button
-                    # release was among them, end the scroll so it can't
-                    # run away.
-                    if ((st.pending or st.active)
-                            and e.BTN_MIDDLE not in dev.active_keys()):
-                        st.release()
+                    # release was among them, end the scroll (or the
+                    # passthrough hold) so it can't run away.
+                    if e.BTN_MIDDLE not in dev.active_keys():
+                        if st.passthrough:
+                            st.passthrough = False
+                            ui.write(e.EV_KEY, e.BTN_MIDDLE, 0)
+                            ui.syn()
+                        elif st.pending or st.active:
+                            st.release()
                 else:
                     ui.syn()
             elif ev.type in (e.EV_KEY, e.EV_REL):
@@ -265,8 +361,9 @@ async def pump(path, dev, ui, st, tasks):
             dev.close()
         except OSError:
             pass
+        states.pop(path, None)
         tasks.pop(path, None)
-        print(f"midscroll: released {path}", flush=True)
+        log.info("released %s", path)
 
 
 def is_mouse(dev):
@@ -281,7 +378,6 @@ def is_mouse(dev):
 
 
 async def main():
-    load_config()
     ui = UInput(
         {
             # All possible mouse button codes (0x110-0x11f).
@@ -291,13 +387,14 @@ async def main():
         },
         name=VIRTUAL_NAME,
     )
-    notifier = Notifier()
+    focus = FocusFilter()
+    notifier = Notifier(focus)
     await notifier.start()
-    st = State(notifier)
+    states = {}
     tasks = {}
     seen = set()
-    tick_task = asyncio.ensure_future(ticker(ui, st))
-    print("midscroll: running", flush=True)
+    tick_task = asyncio.create_task(ticker(ui, states, notifier))
+    log.info("running")
     try:
         while True:
             # Hotplug: probe only paths we have never examined. Non-mouse
@@ -313,9 +410,10 @@ async def main():
                 except OSError:
                     continue
                 if is_mouse(dev):
-                    tasks[path] = asyncio.ensure_future(
-                        pump(path, dev, ui, st, tasks))
+                    tasks[path] = asyncio.create_task(
+                        pump(path, dev, ui, states, tasks, focus))
                 else:
+                    log.debug("ignoring %s (%s)", dev.name, path)
                     dev.close()
             await asyncio.sleep(2)
     finally:
@@ -323,5 +421,77 @@ async def main():
         ui.close()
 
 
-if __name__ == "__main__":
+def _float_arg(key):
+    def parse(text):
+        try:
+            val = float(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"{text!r} is not a number")
+        err = validate(key, val)
+        if err:
+            raise argparse.ArgumentTypeError(f"{key} {err}")
+        return val
+    return parse
+
+
+# CLI flag -> (config key, help text); dest is the key lowercased.
+CLI_FLOATS = {
+    "--deadzone-px": ("DEADZONE_PX", "per-axis dead zone in pixels"),
+    "--speed-mult": ("SPEED_MULT", "overall speed multiplier"),
+    "--speed-exp": ("SPEED_EXP", "speed curve exponent"),
+    "--max-px-per-sec": ("MAX_PX_PER_SEC", "scroll speed safety cap"),
+    "--px-per-notch": ("PX_PER_NOTCH",
+                       "pixels one wheel notch scrolls in your apps"),
+    "--max-drag-px": ("MAX_DRAG_PX", "cap on effective drag distance"),
+    "--tick-hz": ("TICK_HZ", "scroll event rate"),
+}
+
+
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(
+        prog="midscroll",
+        description="Windows-style middle-button drag autoscroll daemon.",
+        epilog=f"Defaults come from {CONFIG_PATH}; command-line options "
+               "override it for this run.")
+    p.add_argument("--version", action="version",
+                   version=f"midscroll {VERSION}")
+    p.add_argument("--config", default=CONFIG_PATH, metavar="PATH",
+                   help=f"config file to read (default: {CONFIG_PATH})")
+    p.add_argument("--debug", action="store_true",
+                   help="log debug detail (device probing, focus changes, "
+                        "scroll starts)")
+    p.add_argument("--natural", action=argparse.BooleanOptionalAction,
+                   default=None, help="invert the scroll direction")
+    p.add_argument("--blacklist", metavar="APPS", default=None,
+                   help="comma-separated window-class substrings over which "
+                        "midscroll pauses (default: "
+                        f"\"{', '.join(BLACKLIST)}\"; pass '' to disable)")
+    for flag, (key, help_text) in CLI_FLOATS.items():
+        p.add_argument(flag, dest=key.lower(), type=_float_arg(key),
+                       default=None, metavar="N",
+                       help=f"{help_text} (default: {globals()[key]:g})")
+    return p.parse_args(argv)
+
+
+def cli():
+    args = parse_args()
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(levelname)s: %(message)s")
+    load_config(args.config)
+    for key in FLOAT_KEYS:
+        val = getattr(args, key.lower())
+        if val is not None:
+            globals()[key] = val
+    if args.natural is not None:
+        globals()["NATURAL"] = args.natural
+    if args.blacklist is not None:
+        globals()["BLACKLIST"] = parse_blacklist(args.blacklist)
+    log.debug("tunables: %s NATURAL=%s BLACKLIST=%s",
+              " ".join(f"{k}={globals()[k]:g}" for k in sorted(FLOAT_KEYS)),
+              NATURAL, BLACKLIST)
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    cli()

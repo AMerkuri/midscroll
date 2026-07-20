@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 repo=$(cd ../.. && pwd)
 
-version=1.3-1
+version=1.4-1
 maintainer=${DEB_MAINTAINER:-"midscroll maintainers <noreply@example.com>"}
 
 work=$(mktemp -d)
@@ -36,7 +36,7 @@ Section: utils
 Priority: optional
 Architecture: all
 Depends: python3, python3-evdev, python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, libgtk4-layer-shell0, gir1.2-gtk4layershell-1.0, librsvg2-common
-Recommends: kdotool
+Recommends: kdotool, x11-utils
 Maintainer: $maintainer
 Description: Windows-style middle-button drag autoscroll
  Hold the middle mouse button and drag to scroll, with speed proportional

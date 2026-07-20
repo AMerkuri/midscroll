@@ -12,5 +12,28 @@ RestartSec=2
 CPUSchedulingPolicy=fifo
 CPUSchedulingPriority=20
 
+# Sandboxing. The daemon needs only /dev/input, /dev/uinput, the config in
+# /etc and its runtime dir. ProtectSystem=strict leaves /dev, /proc and
+# /sys writable, and RuntimeDirectory= is implicitly writable, so the
+# socket and devices keep working. Deliberately absent because they would
+# break the daemon: PrivateDevices/DevicePolicy (needs real evdev+uinput
+# nodes, including ones hotplugged later), ProtectKernelModules (the
+# ExecStartPre modprobe), RestrictRealtime (FIFO scheduling above).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
 [Install]
 WantedBy=multi-user.target
